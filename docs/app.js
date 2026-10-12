@@ -83,6 +83,8 @@ function fillForm(p) {
   $('#p-sid').value = p?.sid ?? '';
   $('#p-console').value = p?.console || 'ndsslot2';
   $('#p-dead').checked = !!p?.deadBattery;
+  $('#p-seed').value = p?.seed || '';
+  $('#p-notes').value = p?.notes || '';
   updateFormVisibility();
   $('#p-form').scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
@@ -90,6 +92,7 @@ function updateFormVisibility() {
   const g = $('#p-game').value;
   $('#p-console-wrap').hidden = !isGen3(g);
   $('#p-dead-wrap').hidden = !(g === 'ruby' || g === 'sapphire');
+  $('#p-seed-wrap').hidden = !isGen3(g);
 }
 $('#p-game').addEventListener('change', updateFormVisibility);
 $('#p-cancel').addEventListener('click', () => fillForm(null));
@@ -98,7 +101,9 @@ $('#p-form').addEventListener('submit', (e) => {
   const tid = parseInt($('#p-tid').value, 10), sid = parseInt($('#p-sid').value, 10);
   if (!(tid >= 0 && tid <= 65535) || !(sid >= 0 && sid <= 65535)) { toast('Trainer ID and Secret ID must be 0–65535'); return; }
   const base = editingId ? profiles.find((p) => p.id === editingId) : { id: 'p' + Date.now(), cal: {} };
-  Object.assign(base, { name: $('#p-name').value.trim(), game: $('#p-game').value, tid, sid, console: $('#p-console').value, deadBattery: $('#p-dead').checked });
+  const seed = $('#p-seed').value.trim().toUpperCase().replace(/^0X/, '');
+  if (seed && !/^[0-9A-F]{1,8}$/.test(seed)) { toast('Starting seed must be hex, like 0B1A'); return; }
+  Object.assign(base, { name: $('#p-name').value.trim(), game: $('#p-game').value, tid, sid, console: $('#p-console').value, deadBattery: $('#p-dead').checked, seed, notes: $('#p-notes').value.trim() });
   if (!editingId) profiles.push(base);
   activeId = base.id; saveProfiles(); renderChip(); fillForm(null); renderProfiles(); loadMons();
   toast('Profile saved');
@@ -154,7 +159,7 @@ $('#s-go').addEventListener('click', async () => {
   status.textContent = 'Searching…';
   let out;
   if (isGen3(p.game)) {
-    out = await engine('gen3Static', { ...base, deadBattery: p.deadBattery, initialAdvances: +$('#s-adv-min').value || 0, maxAdvances: Math.max(1, (+$('#s-adv-max').value || 60000) - (+$('#s-adv-min').value || 0)) });
+    out = await engine('gen3Static', { ...base, deadBattery: p.deadBattery, ...(p.seed ? { seed: parseInt(p.seed, 16) } : {}), initialAdvances: +$('#s-adv-min').value || 0, maxAdvances: Math.max(1, (+$('#s-adv-max').value || 60000) - (+$('#s-adv-min').value || 0)) });
   } else {
     const lead = $('#s-lead').value === 'sync' ? (natureSel === '' ? 255 : +natureSel) : 255;
     out = await engine('gen4Search', { ...base, lead, year: +$('#s-year').value || 2009, minDelay: +$('#s-delay-min').value || 600, maxDelay: +$('#s-delay-max').value || 1100, minAdvances: 0, maxAdvances: +$('#s-adv4').value || 15 });
@@ -162,7 +167,8 @@ $('#s-go').addEventListener('click', async () => {
   $('#s-go').disabled = false;
   if (!out.ok) { status.textContent = 'Error: ' + out.error; return; }
   const name = monName($('#s-mon').value);
-  status.textContent = out.results.length ? `${out.count}${out.complete === false ? '+' : ''} matches for ${name} (${(out.ms / 1000).toFixed(1)} s). Tap one to make it your target.` : `No matches for ${name}. Widen the range or loosen the filters.`;
+  const seedNote = isGen3(p.game) ? ` Seed ${(out.seed ?? 0).toString(16).toUpperCase().padStart(4, '0')}.` : '';
+  status.textContent = out.results.length ? `${out.count}${out.complete === false ? '+' : ''} matches for ${name} (${(out.ms / 1000).toFixed(1)} s). Tap one to make it your target.${seedNote}` : `No matches for ${name}. Widen the range or loosen the filters.${seedNote}`;
   list.innerHTML = out.results.map((r, i) => isGen3(p.game)
     ? `<li data-i="${i}"><span class="big">Frame ${r.advances.toLocaleString()}</span><span class="tag ${r.shiny ? 'shiny' : ''}">${r.shiny ? '★ SHINY' : 'PID ' + r.pid}</span>
        <span class="sub">${r.nature} ${genderTxt(r.gender)} · IVs ${ivText(r.ivs)} · HP ${r.hiddenPower} · ≈${fmtDuration(framesToMs(p, r.advances))} after boot</span></li>`
@@ -367,7 +373,7 @@ function claudeText() {
   const p = profileFor(target) || active();
   const lines = ['Shinykitt status', `Date: ${new Date().toString()}`];
   if (p) {
-    lines.push(`Profile: ${p.name || ''} | ${GAME_NAME[p.game]} | TID ${p.tid} | SID ${p.sid}${isGen3(p.game) ? ` | console ${consoleOf(p)}${p.deadBattery ? ' | dead battery' : ''}` : ''}`);
+    lines.push(`Profile: ${p.name || ''} | ${GAME_NAME[p.game]} | TID ${p.tid} | SID ${p.sid}${isGen3(p.game) ? ` | console ${consoleOf(p)}${p.deadBattery ? ' | dead battery' : ''}${p.seed ? ' | seed ' + p.seed : ''}` : ''}${p.notes ? ' | notes: ' + p.notes : ''}`);
     lines.push(`Calibration: ${JSON.stringify(calOf(p))}`);
   }
   if (target) lines.push(`Target: ${target.summary}${target.gen === 4 ? ` | boot ${target.date} ${target.hour}:${String(target.minute).padStart(2, '0')}:${String(target.second).padStart(2, '0')} | delay ${target.delay}` : ` | frame ${target.frame}`}`);
@@ -381,7 +387,37 @@ $('#l-copy').addEventListener('click', async () => {
   catch { const ta = $('#l-copy-fallback'); ta.hidden = false; ta.value = text; ta.focus(); ta.select(); toast('Select all and copy'); }
 });
 
+// ------------------------------------------------------------ import / export links (#import=<base64url JSON>)
+const b64e = (o) => btoa(unescape(encodeURIComponent(JSON.stringify(o)))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+const b64d = (s) => JSON.parse(decodeURIComponent(escape(atob(s.replace(/-/g, '+').replace(/_/g, '/')))));
+const PROFILE_KEYS = ['name', 'game', 'tid', 'sid', 'console', 'deadBattery', 'seed', 'notes', 'cal'];
+function importFromHash() {
+  const m = location.hash.match(/^#import=([A-Za-z0-9_-]+)$/);
+  if (!m) return;
+  try {
+    const list = [].concat(b64d(m[1]));
+    let added = 0, updated = 0;
+    for (const raw of list) {
+      if (!raw || !GAME_NAME[raw.game] || !(raw.tid >= 0) || !(raw.sid >= 0)) continue;
+      const clean = Object.fromEntries(PROFILE_KEYS.filter((k) => k in raw).map((k) => [k, raw[k]]));
+      const same = profiles.find((p) => p.game === clean.game && p.tid === clean.tid && p.sid === clean.sid);
+      if (same) { Object.assign(same, clean); updated++; activeId = same.id; }
+      else { const p = { id: 'p' + Date.now() + added, cal: {}, ...clean }; profiles.push(p); added++; activeId = p.id; }
+    }
+    saveProfiles();
+    toast(added || updated ? `Imported ${added + updated} profile${added + updated === 1 ? '' : 's'}` : 'Nothing to import in that link');
+  } catch { toast("That import link didn't work"); }
+  history.replaceState(null, '', location.pathname);
+}
+$('#p-export').addEventListener('click', async () => {
+  if (!profiles.length) { toast('No profiles to share yet'); return; }
+  const link = location.origin + location.pathname + '#import=' + b64e(profiles.map((p) => Object.fromEntries(PROFILE_KEYS.filter((k) => k in p).map((k) => [k, p[k]]))));
+  try { await navigator.clipboard.writeText(link); toast('Import link copied'); }
+  catch { const ta = $('#l-copy-fallback'); go('log'); ta.hidden = false; ta.value = link; ta.select(); toast('Select all and copy'); }
+});
+
 // ------------------------------------------------------------ boot
+importFromHash();
 renderChip(); renderProfiles(); loadMons();
 go(store.get('screen', profiles.length ? 'search' : 'setup'));
 if ('serviceWorker' in navigator) {

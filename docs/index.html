@@ -120,11 +120,19 @@
           </select>
         </label>
         <label class="check" id="p-dead-wrap"><input type="checkbox" id="p-dead"> Dead battery (seed 5A0)</label>
+        <label class="field" id="p-seed-wrap">Starting seed (hex, optional)<input id="p-seed" placeholder="Emerald 0 · e.g. 0B1A from Battle Record or painting" autocapitalize="characters"></label>
+        <label class="field">Notes<input id="p-notes" placeholder="e.g. painting seeds B0C–B27"></label>
         <div class="row">
           <button class="btn primary grow" type="submit">Save profile</button>
           <button class="btn" type="button" id="p-cancel">Clear</button>
         </div>
       </form>
+
+      <details class="card">
+        <summary><h3>Share or back up profiles</h3></summary>
+        <p class="hint">Makes a link that adds your profiles to another phone or browser. Opening it imports them; nothing is uploaded anywhere.</p>
+        <button class="btn primary wide" id="p-export" type="button">Copy import link</button>
+      </details>
 
       <details class="card">
         <summary><h3>Find my Secret ID</h3></summary>
