@@ -8,6 +8,22 @@
  */
 #include "kit.hpp"
 
+// GameCubeSearcher only exposes a threaded entry point; WebAssembly here has no threads,
+// so we call its search() directly. Standard headers first so the access tweak can't touch them.
+#include <array>
+#include <atomic>
+#include <mutex>
+#include <thread>
+#include <vector>
+#include <Core/Gen3/StaticTemplate3.hpp>
+#include <Core/Parents/Searchers/SearcherBase.hpp>
+#include <Core/Parents/Searchers/StaticSearcher.hpp>
+#define private public
+#include <Core/Gen3/Searchers/GameCubeSearcher.hpp>
+#undef private
+#include <Core/Gen3/Generators/GameCubeGenerator.hpp>
+#include <Core/RNG/LCRNG.hpp>
+
 #include <Core/Enum/Game.hpp>
 #include <Core/Enum/Lead.hpp>
 #include <Core/Enum/Method.hpp>
@@ -132,8 +148,7 @@ namespace
         char pid[11];
         std::snprintf(pid, sizeof(pid), "%08X", s.getPID());
         auto iv = s.getIVs();
-        return json{ { "advances", s.getAdvances() },
-                     { "pid", pid },
+        json out{ { "pid", pid },
                      { "shiny", s.getShiny() },
                      { "nature", Translator::getNature(s.getNature()) },
                      { "natureId", s.getNature() },
@@ -143,6 +158,8 @@ namespace
                      { "hiddenPower", Translator::getHiddenPower(s.getHiddenPower()) },
                      { "hpPower", s.getHiddenPowerStrength() },
                      { "level", s.getLevel() } };
+        if constexpr (requires { s.getAdvances(); }) out["advances"] = s.getAdvances();
+        return out;
     }
 
     json state4Json(const GeneratorState4 &s)
@@ -304,6 +321,55 @@ namespace
         });
         if (out.size() > 50) out.erase(out.begin() + 50, out.end());
         return { { "results", out } };
+    }
+
+    // ------------------------------------------------------------------ Channel Jirachi (Pokémon Channel event, OT CHANNEL / 40122)
+    json channelJirachi(const json &q)
+    {
+        ensureTranslator();
+        auto min = ivArray(q, "ivMin", 0), max = ivArray(q, "ivMax", 31);
+        u64 combos = 1;
+        for (int i = 0; i < 6; i++) combos *= (max[i] >= min[i] ? max[i] - min[i] + 1 : 0);
+        if (combos > 20000000ull) throw std::runtime_error("Narrow the IV ranges (too many combinations to search on a phone)");
+        Profile3 profile("kit", Game::GC, 40122, 0, false);
+        StateFilter filter = makeFilter(q);
+        const StaticTemplate3 *t = Encounters3::getStaticEncounter(9, 0);
+        GameCubeSearcher searcher(Method::Channel, false, profile, filter);
+        searcher.search(min, max, t);
+        auto states = searcher.getResults();
+        std::sort(states.begin(), states.end(), [](const auto &a, const auto &b) { return a.getSeed() < b.getSeed(); });
+        size_t limit = q.value("limit", 200u);
+        json out = json::array();
+        size_t matched = 0;
+        for (size_t i = 0; i < states.size(); i++)
+        {
+            const auto &st = states[i];
+            // Replay the Channel sequence from this seed to read the trainer details PKHeX checks.
+            XDRNG go(st.getSeed());
+            for (u8 mask = 0; mask < 14;) mask |= 1 << (go.nextUShort() >> 14);
+            go.advance(4);
+            // Same order as PokeFinder's generator: the second threshold is only read if the first fails
+            bool pattern = go.nextUShort() <= 0x4000 || go.nextUShort() <= 0x547a;
+            if (pattern) go.advance(1); else go.advance(2);
+            u16 sid = go.nextUShort();
+            u16 high = go.nextUShort(), low = go.nextUShort();
+            if (40122 ^ sid ^ high ^ (low < 8 ? 1 : 0)) high ^= 0x8000; // the game's "not shiny" check binds as tid^sid^high^(low<8), so it almost always flips the top bit
+            bool consistent = ((static_cast<u32>(high) << 16) | low) == st.getPID();
+            u16 berry = go.nextUShort() >> 13, version = go.nextUShort() >> 12, gender = go.nextUShort() >> 11;
+            json j = stateJson(st);
+            char hex[9];
+            std::snprintf(hex, sizeof(hex), "%08X", st.getSeed());
+            j["seed"] = hex;
+            j["sid"] = sid;
+            j["tid"] = 40122;
+            j["game"] = version >= 8 ? "Ruby" : "Sapphire";
+            j["otGender"] = gender >= 16 ? "Female" : "Male";
+            j["berry"] = berry >= 4 ? "Salac" : "Ganlon";
+            if (!consistent) continue; // never hand out a spread whose details we can't reproduce
+            matched++;
+            if (out.size() < limit) out.push_back(j);
+        }
+        return { { "count", matched }, { "results", out } };
     }
 
     // ------------------------------------------------------------------ catalogue
@@ -481,7 +547,8 @@ std::string kitCall(const std::string &fn, const std::string &input)
         else if (fn == "wild3Species") r = wild3Species(q);
         else if (fn == "gen3Wild") r = gen3Wild(q);
         else if (fn == "gen4Hit") r = gen4Hit(q);
-        else if (fn == "version") r = json{ { "engine", "PokeFinder Core 4.4.1" }, { "kit", "0.2.0" } };
+        else if (fn == "channelJirachi") r = channelJirachi(q);
+        else if (fn == "version") r = json{ { "engine", "PokeFinder Core 4.4.1" }, { "kit", "0.4.0" } };
         else throw std::runtime_error("Unknown function: " + fn);
         r["ok"] = true;
         return r.dump();

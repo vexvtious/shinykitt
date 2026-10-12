@@ -15,6 +15,9 @@ find_package(Threads REQUIRED)
 
 if(EMSCRIPTEN)
   option(ENABLE_SIMD "Enable SIMD" OFF)
+  # Without this, a C++ error (e.g. "narrow the IV ranges") aborts the whole engine instead of returning a message.
+  add_compile_options(-fwasm-exceptions)
+  add_link_options(-fwasm-exceptions)
 else()
   option(ENABLE_SIMD "Enable SIMD" ON)
 endif()

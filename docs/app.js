@@ -53,9 +53,11 @@ function ivInputs(container, prefix, def) {
 const readIVs = (prefix) => STATS.map((_, i) => Math.max(0, Math.min(31, parseInt($('#' + prefix + i).value, 10) || 0)));
 ivInputs($('#s-ivs'), 'siv', 0);
 ivInputs($('#f-ivs'), 'fiv', '');
+ivInputs($('#j-ivs'), 'jiv', 25);
 const natureOpts = NATURES.map((n, i) => `<option value="${i}">${n}</option>`).join('');
 $('#s-nature').insertAdjacentHTML('beforeend', natureOpts);
 $('#f-nature').innerHTML = natureOpts;
+$('#j-nature').insertAdjacentHTML('beforeend', natureOpts);
 
 // ------------------------------------------------------------ profiles
 function renderChip() {
@@ -557,6 +559,38 @@ function wireHitFinder(p, t) {
     list.querySelectorAll('[data-h]').forEach((li) => li.onclick = () => { $('#tm-hit').value = rows[+li.dataset.h].hit; $('#tm-hit').scrollIntoView({ behavior: 'smooth', block: 'center' }); toast('Filled in. Press Update to apply.'); });
   };
 }
+
+// ------------------------------------------------------------ Channel Jirachi (no profile needed: TID is always 40122)
+function jirachiText(r) {
+  return [`Channel Jirachi · seed ${r.seed}`, `PID ${r.pid} · ${r.nature} · ${r.shiny ? 'SHINY' : 'not shiny'}`,
+    `IVs ${STATS.map((s, i) => `${s} ${r.ivs[i]}`).join(' / ')} · Hidden Power ${r.hiddenPower} ${r.hpPower}`,
+    `OT CHANNEL (${r.otGender}) · TID 40122 · SID ${r.sid} · Game ${r.game} · Item ${r.berry} Berry · Lv 5`,
+    'Language: any except Japanese'].join('\n');
+}
+$('#j-go').addEventListener('click', async () => {
+  const status = $('#j-status'), list = $('#j-results');
+  const q = { shinyOnly: $('#j-shiny').checked, ivMin: readIVs('jiv'), limit: 5000 };
+  if ($('#j-nature').value !== '') q.natures = [+$('#j-nature').value];
+  list.innerHTML = ''; $('#j-go').disabled = true; status.textContent = 'Searching…';
+  const t0 = performance.now();
+  const out = await engine('channelJirachi', q);
+  $('#j-go').disabled = false;
+  if (!out.ok) { status.textContent = 'Error: ' + out.error; return; }
+  const game = $('#j-game').value, otg = $('#j-otg').value;
+  const rows = out.results.filter((r) => (!game || r.game === game) && (!otg || r.otGender === otg))
+    .sort((a, b) => b.ivs.reduce((x, y) => x + y, 0) - a.ivs.reduce((x, y) => x + y, 0));
+  const shown = rows.slice(0, 200);
+  status.textContent = rows.length
+    ? `${rows.length}${out.count > out.results.length ? '+' : ''} spreads, best IVs first (${((performance.now() - t0) / 1000).toFixed(1)} s). Tap one to copy all its details.`
+    : 'No spreads. Lower some minimum IVs or loosen the filters.';
+  list.innerHTML = shown.map((r, i) => `<li data-i="${i}"><span class="big">${r.nature} · ${ivText(r.ivs)}</span><span class="tag ${r.shiny ? 'shiny' : ''}">${r.shiny ? '★ SHINY' : 'PID ' + r.pid}</span>
+     <span class="sub">Seed ${r.seed} · PID ${r.pid} · SID ${r.sid} · ${r.game} · OT ${r.otGender === 'Female' ? '♀' : '♂'} · ${r.berry} · HP ${r.hiddenPower} ${r.hpPower}</span></li>`).join('');
+  list.querySelectorAll('li[data-i]').forEach((li) => li.onclick = async () => {
+    const text = jirachiText(shown[+li.dataset.i]);
+    try { await navigator.clipboard.writeText(text); toast('Copied this Jirachi'); }
+    catch { const ta = $('#l-copy-fallback'); go('log'); ta.hidden = false; ta.value = text; ta.select(); toast('Select all and copy'); }
+  });
+});
 
 // ------------------------------------------------------------ log + copy for Claude
 function renderLog() {

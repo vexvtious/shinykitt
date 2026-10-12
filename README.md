@@ -41,15 +41,17 @@ After changing anything in `docs/`, bump `VERSION` in `docs/sw.js` so installed 
 
 ### Engine functions
 
-`listStatic`, `gen3Static`, `wild3Species`, `gen3Wild`, `gen4Static`, `gen4Search`, `gen4SeedTimes`, `gen4Hit`, `findSID`, `version`. Each takes one JSON object; see `engine/kit.cpp`.
+`listStatic`, `gen3Static`, `wild3Species`, `gen3Wild`, `gen4Static`, `gen4Search`, `gen4SeedTimes`, `gen4Hit`, `findSID`, `channelJirachi`, `version`. Each takes one JSON object; see `engine/kit.cpp`.
 
 ### Verification
 
 PokéFinder Core was built from this pinned commit and checked against PokéFinder's own Gen 3 and Gen 4 test suites: 227 cases, 14,955 checks, 0 failures. The bindings reproduce the test data, for example Ruby Groudon on seed 0 (Method 4) giving PID `E97E0000` with IVs 17/19/20/18/3/2.
 
+Channel Jirachi spreads are also replayed independently against PKHeX's legality algorithm (menu pattern, accept rolls, SID, the PID shiny-lock quirk, berry, game, OT gender, IVs): 2,000 spreads, 0 mismatches.
+
 ## Not covered yet
 
-Jirachi (Wishmaker/Channel), Gen 3 eggs, live-battery Ruby/Sapphire seeds, timing a new Battle Video or a painting reseed, Gen 4 wild/eggs/Cute Charm/TID-SID setup, Gen 5 (Black 2), and Gen 7 (3DSRNGTool is still the tool for Ultra Sun).
+Wishmaker Jirachi, Gen 3 eggs, live-battery Ruby/Sapphire seeds, timing a new Battle Video or a painting reseed, Gen 4 wild/eggs/Cute Charm/TID-SID setup, Gen 5 (Black 2), and Gen 7 (3DSRNGTool is still the tool for Ultra Sun).
 
 ## Licences and credits
 

@@ -85,6 +85,22 @@
         <p class="status" id="s-status" aria-live="polite"></p>
         <ol class="results" id="s-results"></ol>
       </div>
+
+      <details class="card" id="jirachi-card">
+        <summary><h3>Channel Jirachi</h3></summary>
+        <p class="hint">Every legal spread for the Pokémon Channel Jirachi. Its Secret ID, game (Ruby/Sapphire), OT gender and berry all come from the same seed, so pick a row and keep all of it together. OT is always CHANNEL, TID 40122. Language must not be Japanese.</p>
+        <div class="row wrap">
+          <label class="check"><input type="checkbox" id="j-shiny" checked> Shiny only</label>
+          <label class="field">Nature<select id="j-nature"><option value="">Any</option></select></label>
+          <label class="field">Game<select id="j-game"><option value="">Any</option><option>Ruby</option><option>Sapphire</option></select></label>
+          <label class="field">OT gender<select id="j-otg"><option value="">Any</option><option>Male</option><option>Female</option></select></label>
+        </div>
+        <p class="hint">Minimum IVs (keep them fairly high; very loose ranges are too slow on a phone)</p>
+        <div class="ivs" id="j-ivs"></div>
+        <button class="btn primary wide" id="j-go" type="button">Find spreads</button>
+        <p class="status" id="j-status" aria-live="polite"></p>
+        <ol class="results" id="j-results"></ol>
+      </details>
     </section>
 
     <!-- TIMER -->
