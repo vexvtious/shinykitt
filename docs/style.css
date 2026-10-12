@@ -119,3 +119,10 @@ h2, h3 { font-family: var(--f-display); font-size: 10px; margin: 4px 0 10px; let
 
 @media (prefers-reduced-motion: reduce) { .lcd.flash { animation: none; } }
 .field .big { font-family: var(--f-screen); font-size: 22px; text-transform: none; letter-spacing: 0; padding: 6px 0; }
+
+.seg { display: grid; grid-template-columns: 1fr 1fr; gap: 0; margin-bottom: 12px; border: 2px solid var(--lcd-ink); }
+.seg button { font-family: var(--f-display); font-size: 8px; padding: 10px 0; background: var(--lcd-hi); border: 0; color: var(--lcd-ink); }
+.seg button[aria-pressed="true"] { background: var(--lcd-ink); color: var(--lcd-hi); }
+.hit-ivs { display: grid; grid-template-columns: auto repeat(6, 1fr); gap: 4px 6px; align-items: center; margin: 8px 0; }
+.hit-ivs span { font-family: var(--f-display); font-size: 7px; }
+.hit-ivs input { font-family: var(--f-screen); font-size: 20px; width: 100%; min-width: 0; padding: 2px 3px; background: var(--lcd-hi); border: 2px solid var(--lcd-ink); color: var(--lcd-ink); }

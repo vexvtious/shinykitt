@@ -6,8 +6,10 @@ An offline-capable RNG search and timer for retail shiny hunting in **Gen 3** (E
 
 ## What it does
 
-- **Search:** finds shiny (or filtered) frames for static encounters, gifts, starters, legends and roamers. Emerald uses its fixed seed 0; dead-battery Ruby and Sapphire use 5A0. Gen 4 searches every retail-reachable seed in a delay window and gives you the boot date, time and delay.
+- **Search:** finds shiny (or filtered) frames for static encounters, gifts, starters, legends and roamers, plus **Gen 3 wild** (grass and caves, surfing, fishing including Feebas tiles, Rock Smash) across Wild 1/2/4 with Synchronize or Cute Charm leads. Emerald uses its fixed seed 0; dead-battery Ruby and Sapphire use 5A0. Gen 4 searches every retail-reachable seed in a delay window and gives you the boot date, time and delay.
 - **Timer:** a two-phase timer with beeps, flashes and vibration, using EonTimer's maths for GBA, DS Lite GBA slot and DS. It adjusts its own calibration from what you actually hit.
+- **Battle Record mode (Emerald):** search from your record's seed and advance; the timer counts only the wait after the record and calibrates as an offset in advances. **Compare painting seeds** ranks your painting seeds for a target.
+- **Find what I hit:** enter the nature and IVs you got and it finds the advance (Gen 3) or delay and second (Gen 4) you actually hit, ready to apply to calibration.
 - **Find my Secret ID:** enter a caught Pokémon's IVs and nature to get its PID and every Secret ID that would make it shiny.
 - **Copy for Claude:** copies your profile, target, calibration and recent attempts as text to paste into a chat.
 
@@ -39,7 +41,7 @@ After changing anything in `docs/`, bump `VERSION` in `docs/sw.js` so installed 
 
 ### Engine functions
 
-`listStatic`, `gen3Static`, `gen4Static`, `gen4Search`, `gen4SeedTimes`, `findSID`, `version`. Each takes one JSON object; see `engine/kit.cpp`.
+`listStatic`, `gen3Static`, `wild3Species`, `gen3Wild`, `gen4Static`, `gen4Search`, `gen4SeedTimes`, `gen4Hit`, `findSID`, `version`. Each takes one JSON object; see `engine/kit.cpp`.
 
 ### Verification
 
@@ -47,7 +49,7 @@ PokéFinder Core was built from this pinned commit and checked against PokéFind
 
 ## Not covered yet
 
-Gen 3 and Gen 4 wild and egg RNG, the Cute Charm TID/SID setup, Gen 5 (Black 2), and Gen 7 (3DSRNGTool is still the tool for Ultra Sun).
+Jirachi (Wishmaker/Channel), Gen 3 eggs, live-battery Ruby/Sapphire seeds, timing a new Battle Video or a painting reseed, Gen 4 wild/eggs/Cute Charm/TID-SID setup, Gen 5 (Black 2), and Gen 7 (3DSRNGTool is still the tool for Ultra Sun).
 
 ## Licences and credits
 

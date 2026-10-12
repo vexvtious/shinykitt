@@ -30,10 +30,27 @@
         <button class="btn" data-go="setup" type="button">Go to Setup</button>
       </div>
       <div id="search-body">
-        <div class="row">
+        <div class="seg" id="s-kind-wrap" role="tablist" aria-label="Encounter kind">
+          <button type="button" data-kind="static" aria-pressed="true">Static / gift</button>
+          <button type="button" data-kind="wild" aria-pressed="false">Wild</button>
+        </div>
+        <div class="row" id="s-static-pick">
           <label class="field grow">Pokémon
             <select id="s-mon"></select>
           </label>
+        </div>
+        <div id="s-wild-pick" hidden>
+          <div class="row">
+            <label class="field grow">Pokémon<select id="s-wmon"></select></label>
+          </div>
+          <div class="row">
+            <label class="field grow">Where<select id="s-warea"></select></label>
+          </div>
+          <div class="row wrap">
+            <label class="check"><input type="checkbox" id="s-m1" checked> Wild 1</label>
+            <label class="check"><input type="checkbox" id="s-m2" checked> Wild 2</label>
+            <label class="check"><input type="checkbox" id="s-m4" checked> Wild 4</label>
+          </div>
         </div>
         <div class="row wrap">
           <label class="check"><input type="checkbox" id="s-shiny" checked> Shiny only</label>
@@ -44,6 +61,8 @@
             <select id="s-lead">
               <option value="255">None</option>
               <option value="sync">Synchronize (nature)</option>
+              <option value="25" data-wild>Cute Charm (♀ lead)</option>
+              <option value="26" data-wild>Cute Charm (♂ lead)</option>
             </select>
           </label>
         </div>

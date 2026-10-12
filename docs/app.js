@@ -154,8 +154,18 @@ async function loadMons() {
   if (!p) return;
   $('#s-gen3-range').hidden = !isGen3(p.game);
   $('#s-gen4-range').hidden = isGen3(p.game);
-  $('#s-lead').closest('.field').hidden = isGen3(p.game);
-  $('#s-paint').hidden = !(isGen3(p.game) && parsePaintings(p.paintings).length);
+  $('#s-kind-wrap').hidden = !isGen3(p.game);
+  if (isGen3(p.game)) {
+    engine('wild3Species', { game: p.game }).then((w) => {
+      if (!w.ok) return;
+      wildCatalogue = w.species.sort((x, y) => x.name.localeCompare(y.name));
+      $('#s-wmon').innerHTML = wildCatalogue.map((x) => `<option value="${x.species}">${esc(x.name)}</option>`).join('');
+      const rem = store.get('wmon.' + p.game, null);
+      if (rem && wildCatalogue.some((x) => x.species === rem)) $('#s-wmon').value = rem;
+      fillAreas();
+    });
+  }
+  setKind(store.get('kind.' + p.game, 'static'));
   if (recordMode(p) && (+$('#s-adv-min').value || 0) < p.recordAdvance) {
     $('#s-adv-min').value = p.recordAdvance;
     $('#s-adv-max').value = p.recordAdvance + 200000;
@@ -178,33 +188,81 @@ function monName(val) {
 const ivText = (ivs) => ivs.join('/');
 const genderTxt = (g) => (g === 0 ? '♂' : g === 1 ? '♀' : '');
 
+let searchKind = 'static';
+let wildCatalogue = [];
+function setKind(kind) {
+  const p = active();
+  searchKind = isGen3(p?.game) ? kind : 'static';
+  $$('#s-kind-wrap [data-kind]').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.kind === searchKind)));
+  $('#s-static-pick').hidden = searchKind !== 'static';
+  $('#s-wild-pick').hidden = searchKind !== 'wild';
+  // Lead: Gen 4 statics (Synchronize) and Gen 3 wild (Synchronize, Cute Charm); Gen 3 statics ignore leads
+  const showLead = !isGen3(p?.game) || searchKind === 'wild';
+  $('#s-lead').closest('.field').hidden = !showLead;
+  $$('#s-lead option[data-wild]').forEach((o) => { o.hidden = !(isGen3(p?.game) && searchKind === 'wild'); });
+  if ($('#s-lead').selectedOptions[0]?.hidden) $('#s-lead').value = '255';
+  $('#s-paint').hidden = !(isGen3(p?.game) && searchKind === 'static' && parsePaintings(p?.paintings).length);
+  if (p) store.set('kind.' + p.game, searchKind);
+}
+$$('#s-kind-wrap [data-kind]').forEach((b) => b.addEventListener('click', () => setKind(b.dataset.kind)));
+function fillAreas() {
+  const sp = +$('#s-wmon').value;
+  const entry = wildCatalogue.find((x) => x.species === sp);
+  $('#s-warea').innerHTML = (entry?.areas || []).map((a, i) => `<option value="${i}">${esc(a.locationName)} · ${esc(a.encounterName)}</option>`).join('');
+  const p = active(); if (p) store.set('wmon.' + p.game, sp);
+}
+$('#s-wmon').addEventListener('change', fillAreas);
+function leadValue(natureSel) {
+  const v = $('#s-lead').value;
+  if (v === 'sync') return natureSel === '' ? 255 : +natureSel;
+  return +v;
+}
+function currentWild() {
+  const entry = wildCatalogue.find((x) => x.species === +$('#s-wmon').value);
+  const area = entry?.areas[+$('#s-warea').value];
+  return entry && area ? { species: entry.species, name: entry.name, encounter: area.encounter, location: area.location, feebasTile: area.feebasTile, where: `${area.locationName} · ${area.encounterName}` } : null;
+}
+const wildMethods = () => [['#s-m1', 'method1'], ['#s-m2', 'method2'], ['#s-m4', 'method4']].filter(([id]) => $(id).checked).map(([, m]) => m);
+
 $('#s-go').addEventListener('click', async () => {
   const p = active(); if (!p) return;
-  const [category, index] = $('#s-mon').value.split(':').map(Number);
   const natureSel = $('#s-nature').value;
-  const base = { game: p.game, tid: p.tid, sid: p.sid, category, index, shinyOnly: $('#s-shiny').checked, ivMin: readIVs('siv'), limit: 200 };
+  const base = { game: p.game, tid: p.tid, sid: p.sid, shinyOnly: $('#s-shiny').checked, ivMin: readIVs('siv'), limit: 200 };
   if (natureSel !== '') base.natures = [+natureSel];
   const status = $('#s-status'), list = $('#s-results');
+  let out, name, wild = null, category, index;
+  if (isGen3(p.game) && searchKind === 'wild') {
+    wild = currentWild();
+    if (!wild) { toast('Pick a Pokémon and where to find it'); return; }
+    const methods = wildMethods();
+    if (!methods.length) { toast('Tick at least one of Wild 1, 2, 4'); return; }
+    wild.methods = methods; wild.lead = leadValue(natureSel); name = wild.name;
+  } else {
+    [category, index] = $('#s-mon').value.split(':').map(Number);
+    name = monName($('#s-mon').value);
+  }
   list.innerHTML = ''; $('#s-go').disabled = true;
   status.textContent = 'Searching…';
-  let out;
   if (isGen3(p.game)) {
-    out = await engine('gen3Static', { ...base, deadBattery: p.deadBattery, ...(p.seed ? { seed: parseInt(p.seed, 16) } : {}), initialAdvances: +$('#s-adv-min').value || 0, maxAdvances: Math.max(1, (+$('#s-adv-max').value || 60000) - (+$('#s-adv-min').value || 0)) });
+    const range = { deadBattery: p.deadBattery, ...(p.seed ? { seed: parseInt(p.seed, 16) } : {}), initialAdvances: +$('#s-adv-min').value || 0, maxAdvances: Math.max(1, (+$('#s-adv-max').value || 60000) - (+$('#s-adv-min').value || 0)) };
+    out = wild
+      ? await engine('gen3Wild', { ...base, ...range, encounter: wild.encounter, location: wild.location, feebasTile: wild.feebasTile, species: wild.species, methods: wild.methods, lead: wild.lead })
+      : await engine('gen3Static', { ...base, ...range, category, index });
   } else {
-    const lead = $('#s-lead').value === 'sync' ? (natureSel === '' ? 255 : +natureSel) : 255;
-    out = await engine('gen4Search', { ...base, lead, year: +$('#s-year').value || 2009, minDelay: +$('#s-delay-min').value || 600, maxDelay: +$('#s-delay-max').value || 1100, minAdvances: 0, maxAdvances: +$('#s-adv4').value || 15 });
+    out = await engine('gen4Search', { ...base, category, index, lead: leadValue(natureSel), year: +$('#s-year').value || 2009, minDelay: +$('#s-delay-min').value || 600, maxDelay: +$('#s-delay-max').value || 1100, minAdvances: 0, maxAdvances: +$('#s-adv4').value || 15 });
   }
   $('#s-go').disabled = false;
   if (!out.ok) { status.textContent = 'Error: ' + out.error; return; }
-  const name = monName($('#s-mon').value);
   const seedNote = isGen3(p.game) ? ` Seed ${(out.seed ?? 0).toString(16).toUpperCase().padStart(4, '0')}.` : '';
-  status.textContent = out.results.length ? `${out.count}${out.complete === false ? '+' : ''} matches for ${name} (${(out.ms / 1000).toFixed(1)} s). Tap one to make it your target.${seedNote}` : `No matches for ${name}. Widen the range or loosen the filters.${seedNote}`;
+  const whereNote = wild ? ` ${wild.where}.` : '';
+  status.textContent = out.results.length ? `${out.count}${out.complete === false ? '+' : ''} matches for ${name} (${(out.ms / 1000).toFixed(1)} s). Tap one to make it your target.${whereNote}${seedNote}` : `No matches for ${name}. Widen the range or loosen the filters.${whereNote}${seedNote}`;
   list.innerHTML = out.results.map((r, i) => isGen3(p.game)
     ? `<li data-i="${i}"><span class="big">Frame ${r.advances.toLocaleString()}</span><span class="tag ${r.shiny ? 'shiny' : ''}">${r.shiny ? '★ SHINY' : 'PID ' + r.pid}</span>
-       <span class="sub">${r.nature} ${genderTxt(r.gender)} · IVs ${ivText(r.ivs)} · HP ${r.hiddenPower} · ${gen3WaitText(p, r.advances)}</span></li>`
+       <span class="sub">${wild ? esc(r.method).replace('Method', 'Wild') + ' · Lv ' + r.level + ' · ' : ''}${r.nature} ${genderTxt(r.gender)} · IVs ${ivText(r.ivs)} · HP ${r.hiddenPower} · ${gen3WaitText(p, r.advances)}</span></li>`
     : `<li data-i="${i}"><span class="big">Delay ${r.delay} · +${r.advances}</span><span class="tag ${r.shiny ? 'shiny' : ''}">${r.shiny ? '★ SHINY' : 'PID ' + r.pid}</span>
        <span class="sub">${r.nature} ${genderTxt(r.gender)} · IVs ${ivText(r.ivs)} · seed ${r.seed} · hour ${r.hour} · ${p.game === 'heartgold' || p.game === 'soulsilver' ? 'call ' + r.call : 'Chatot ' + r.chatot}</span></li>`).join('');
-  list.querySelectorAll('li[data-i]').forEach((li) => li.onclick = () => chooseResult(p, name, out.results[+li.dataset.i], li));
+  const ctx = wild ? { kind: 'wild', ...wild } : { kind: 'static', category, index, lead: isGen3(p.game) ? 255 : leadValue(natureSel) };
+  list.querySelectorAll('li[data-i]').forEach((li) => li.onclick = () => chooseResult(p, name, out.results[+li.dataset.i], li, ctx));
 });
 
 $('#s-paint').addEventListener('click', async () => {
@@ -237,11 +295,12 @@ function gen3WaitText(p, adv) {
   const wait = adv - p.recordAdvance;
   return wait < 0 ? 'before your Battle Record point' : `wait ${wait.toLocaleString()} after Battle Record (≈${fmtDuration(framesToMs(p, wait))})`;
 }
-async function chooseResult(p, name, r, li) {
+async function chooseResult(p, name, r, li, ctx) {
   if (isGen3(p.game)) {
     if (recordMode(p) && r.advances < p.recordAdvance) { toast('That frame is before your Battle Record point'); return; }
-    setTarget({ gen: 3, game: p.game, profileId: p.id, mon: name, frame: r.advances, seed: p.seed || null, record: recordMode(p),
-      summary: `${name} · ${p.seed ? 'seed ' + p.seed + ' · ' : ''}advance ${r.advances.toLocaleString()} · ${r.nature} · ${ivText(r.ivs)}${r.shiny ? ' · shiny' : ''}`, pid: r.pid });
+    const how = ctx.kind === 'wild' ? `${ctx.where} · ${r.method.replace('Method', 'Wild')} · ` : '';
+    setTarget({ gen: 3, game: p.game, profileId: p.id, mon: name, frame: r.advances, seed: p.seed || null, record: recordMode(p), ctx, method: r.method,
+      summary: `${name} · ${how}${p.seed ? 'seed ' + p.seed + ' · ' : ''}advance ${r.advances.toLocaleString()} · ${r.nature} · ${ivText(r.ivs)}${r.shiny ? ' · shiny' : ''}`, pid: r.pid });
     go('timer'); return;
   }
   // Gen 4: pick the boot date/time that produces this seed
@@ -254,7 +313,7 @@ async function chooseResult(p, name, r, li) {
     e.stopPropagation();
     const x = t.results[+el.dataset.t];
     const [hh, mm, ss] = x.time.split(':').map(Number);
-    setTarget({ gen: 4, game: p.game, profileId: p.id, mon: name, delay: x.delay, second: ss, date: x.date, hour: hh, minute: mm, seed: r.seed, advances: r.advances, chatot: r.chatot, call: r.call,
+    setTarget({ gen: 4, game: p.game, profileId: p.id, mon: name, delay: x.delay, second: ss, date: x.date, hour: hh, minute: mm, seed: r.seed, advances: r.advances, chatot: r.chatot, call: r.call, ctx,
       summary: `${name} · seed ${r.seed} · delay ${x.delay} · +${r.advances} · ${r.nature} · ${ivText(r.ivs)}${r.shiny ? ' · shiny' : ''}` });
     go('timer');
   });
@@ -308,9 +367,9 @@ function renderTimer() {
     ins.innerHTML = `1. Stand in front of the Pokémon. Open your Trainer Card and highlight <b>Battle Record</b>, but don't press A yet.<br>
       2. Press START. When phase 1 ends, press A to play the record (this resets the RNG to seed ${esc(p.seed)}, advance ${p.recordAdvance.toLocaleString()}).<br>
       3. Let it finish and close the menus.<br>4. When phase 2 ends (the 6th beep), press A to start the encounter.`;
-    calib.innerHTML = `<label class="field">Advance you actually hit<input id="tm-hit" inputmode="numeric" placeholder="search your result's IVs/nature on this seed"></label>
+    calib.innerHTML = `<label class="field">Advance you actually hit<input id="tm-hit" inputmode="numeric" placeholder="or use Find what I hit below"></label>
       <button class="btn wide" id="tm-apply" type="button">Update offset</button>
-      <p class="hint">Search seed ${esc(p.seed)} around your target for the nature and IVs you got, and enter that advance. If you hit late, the offset grows and the next wait gets shorter (your sheet's "aimed 301,364, hit 301,634 → 270").</p>`;
+      <p class="hint">Search seed ${esc(p.seed)} around your target for the nature and IVs you got, and enter that advance. If you hit late, the offset grows and the next wait gets shorter (your sheet's "aimed 301,364, hit 301,634 → 270").</p>` + hitFinderHtml(false);
   } else if (isGen3(p.game)) {
     const frame = t?.frame ?? c.lastFrame ?? 1000;
     tgt.innerHTML = t ? `<b>TARGET · ${esc(GAME_NAME[p.game])}</b>${esc(t.summary)}` : `<b>${esc(GAME_NAME[p.game])}</b>No target picked. Set a frame below.`;
@@ -321,9 +380,9 @@ function renderTimer() {
       <label class="field">Console<select id="tm-console"><option value="ndsslot2">DS Lite (GBA slot)</option><option value="gba">GBA / SP</option></select></label>`;
     $('#tm-console').value = consoleOf(p);
     ins.innerHTML = `1. Save in front of the Pokémon and turn the console off.<br>2. Press START. When phase 1 ends, turn the console on.<br>3. When phase 2 ends (the 6th beep), press A on the last text box to start the encounter.`;
-    calib.innerHTML = `<label class="field">Frame you actually hit<input id="tm-hit" inputmode="numeric" placeholder="from the Pokémon's IVs/nature"></label>
+    calib.innerHTML = `<label class="field">Frame you actually hit<input id="tm-hit" inputmode="numeric" placeholder="or use Find what I hit below"></label>
       <button class="btn wide" id="tm-apply" type="button">Update calibration</button>
-      <p class="hint">Find the frame you hit by searching for your result's IVs and nature, then enter it here. The timer shifts by the difference.</p>`;
+      <p class="hint">Find the frame you hit by searching for your result's IVs and nature, then enter it here. The timer shifts by the difference.</p>` + hitFinderHtml(false);
   } else {
     const delay = t?.delay ?? c.lastDelay ?? 600, second = t?.second ?? c.lastSecond ?? 50;
     tgt.innerHTML = t ? `<b>TARGET · ${esc(GAME_NAME[p.game])}</b>${esc(t.summary)}` : `<b>${esc(GAME_NAME[p.game])}</b>No target picked. Set a delay and second below.`;
@@ -343,12 +402,13 @@ function renderTimer() {
     ins.innerHTML = `1. Save in front of the Pokémon. Open the DS clock settings and set it to <b>${esc(when)}</b>, but don't confirm yet.<br>
       2. Press START here at the same moment you confirm the clock.<br>3. When phase 1 ends, open the game from the DS menu.<br>
       4. When phase 2 ends, press A on Continue.${t ? `<br>5. Advance ${t.advances} time(s) (${p.game === 'heartgold' || p.game === 'soulsilver' ? 'target call ' + t.call : 'target Chatot pitch ' + t.chatot}), then trigger the encounter.` : ''}`;
-    calib.innerHTML = `<label class="field">Delay you actually hit<input id="tm-hit" inputmode="numeric" placeholder="from the search tool's calibration"></label>
+    calib.innerHTML = `<label class="field">Delay you actually hit<input id="tm-hit" inputmode="numeric" placeholder="or use Find what I hit below"></label>
       <button class="btn wide" id="tm-apply" type="button">Update calibration</button>
-      <p class="hint">Find the delay you hit by generating the seed's neighbours (same date and time, nearby delays) and matching your Pokémon. Enter it here and the calibrated delay adjusts.</p>`;
+      <p class="hint">Find the delay you hit by generating the seed's neighbours (same date and time, nearby delays) and matching your Pokémon. Enter it here and the calibrated delay adjusts.</p>` + hitFinderHtml(true);
   }
   fields.querySelectorAll('input,select').forEach((el) => el.addEventListener('change', () => saveTimerFields(p)));
   $('#tm-apply').onclick = () => applyCalibration(p);
+  wireHitFinder(p, t);
   saveTimerFields(p);
 }
 function saveTimerFields(p) {
@@ -451,6 +511,51 @@ function applyCalibration(p) {
   attempts.unshift({ when: new Date().toISOString(), game: p.game, profile: p.name || GAME_NAME[p.game], target: target?.summary || '', hit, note });
   attempts = attempts.slice(0, 200); store.set('attempts', attempts);
   saveProfiles(); renderTimer(); toast('Calibration updated');
+}
+
+
+// ------------------------------------------------------------ "what did I hit?" lookup
+function hitFinderHtml(gen4) {
+  const ivRow = (pre, v) => STATS.map((st, i) => `<input id="${pre}${i}" inputmode="numeric" value="${v}" aria-label="${st} ${pre === 'hfmin' ? 'minimum' : 'maximum'} IV">`).join('');
+  return `<details class="more" id="hf"><summary>Find what I hit</summary>
+    <p class="hint">Enter what you caught: nature and IVs (exact, or a range if your IV calculator gives one). This searches around your target ${gen4 ? 'delay (and ±1 second)' : 'advance'} for matches.</p>
+    <div class="row wrap"><label class="field">Nature<select id="hf-nature"><option value="">Any</option>${NATURES.map((n, i) => `<option value="${i}">${n}</option>`).join('')}</select></label>
+      <label class="field">Search ±<input id="hf-window" inputmode="numeric" value="${gen4 ? 100 : 20000}"></label></div>
+    <div class="hit-ivs"><span></span>${STATS.map((st) => `<span>${st}</span>`).join('')}<span>MIN</span>${ivRow('hfmin', 0)}<span>MAX</span>${ivRow('hfmax', 31)}</div>
+    <button class="btn wide" id="hf-go" type="button">Find matches</button>
+    <ol class="results" id="hf-results"></ol></details>`;
+}
+function wireHitFinder(p, t) {
+  const go = $('#hf-go'); if (!go) return;
+  go.onclick = async () => {
+    const list = $('#hf-results');
+    if (!t?.ctx) { list.innerHTML = '<li class="static">Pick your target from Search first, so the lookup knows which Pokémon and seed to check.</li>'; return; }
+    const nat = $('#hf-nature').value;
+    const ivMin = STATS.map((_, i) => Math.max(0, Math.min(31, parseInt($('#hfmin' + i).value, 10) || 0)));
+    const ivMax = STATS.map((_, i) => { const v = parseInt($('#hfmax' + i).value, 10); return Math.max(0, Math.min(31, Number.isFinite(v) ? v : 31)); });
+    const win = Math.max(1, parseInt($('#hf-window').value, 10) || 1);
+    const base = { game: p.game, tid: p.tid, sid: p.sid, ivMin, ivMax, shinyOnly: false, limit: 50, ...(nat !== '' ? { natures: [+nat] } : {}) };
+    list.innerHTML = '<li class="static">Searching…</li>';
+    let out, rows;
+    if (isGen3(p.game)) {
+      const center = calOf(p).lastFrame ?? t.frame;
+      const from = Math.max(0, center - win);
+      const common = { ...base, deadBattery: p.deadBattery, ...(p.seed ? { seed: parseInt(p.seed, 16) } : {}), initialAdvances: from, maxAdvances: center + win - from };
+      out = t.ctx.kind === 'wild'
+        ? await engine('gen3Wild', { ...common, encounter: t.ctx.encounter, location: t.ctx.location, feebasTile: t.ctx.feebasTile, species: t.ctx.species, methods: t.ctx.methods, lead: t.ctx.lead })
+        : await engine('gen3Static', { ...common, category: t.ctx.category, index: t.ctx.index });
+      if (!out.ok) { list.innerHTML = `<li class="static">${esc(out.error)}</li>`; return; }
+      rows = out.results.map((r) => ({ hit: r.advances, off: r.advances - center, label: `Advance ${r.advances.toLocaleString()}`, sub: `${r.method ? r.method.replace('Method', 'Wild') + ' · ' : ''}${r.nature} · ${ivText(r.ivs)}` }));
+    } else {
+      out = await engine('gen4Hit', { ...base, seed: t.seed, category: t.ctx.category, index: t.ctx.index, lead: t.ctx.lead, delayRange: win, secondRange: 1, maxAdvances: (t.advances || 0) + 20 });
+      if (!out.ok) { list.innerHTML = `<li class="static">${esc(out.error)}</li>`; return; }
+      rows = out.results.map((r) => ({ hit: t.delay + r.delayOff, off: r.delayOff, label: `Delay ${t.delay + r.delayOff}${r.secondOff ? ` · second ${r.secondOff > 0 ? '+' : ''}${r.secondOff}` : ''}`, sub: `+${r.advances} advances · ${r.nature} · ${ivText(r.ivs)}${r.secondOff ? ' · you missed the second, check the calibrated second' : ''}` }));
+    }
+    rows.sort((a, b) => Math.abs(a.off) - Math.abs(b.off));
+    list.innerHTML = rows.length ? rows.map((r, i) => `<li data-h="${i}"><span class="big">${esc(r.label)}</span><span class="tag">${r.off >= 0 ? '+' : ''}${r.off}</span><span class="sub">${esc(r.sub)} · tap to use</span></li>`).join('')
+      : '<li class="static">No match nearby. Double-check the IVs, widen the search, or try another nature.</li>';
+    list.querySelectorAll('[data-h]').forEach((li) => li.onclick = () => { $('#tm-hit').value = rows[+li.dataset.h].hit; $('#tm-hit').scrollIntoView({ behavior: 'smooth', block: 'center' }); toast('Filled in. Press Update to apply.'); });
+  };
 }
 
 // ------------------------------------------------------------ log + copy for Claude
