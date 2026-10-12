@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Shinykitt</title>
+<meta name="description" content="Offline RNG search and timer for retail Gen 3 and Gen 4 Pokémon, powered by PokéFinder.">
+<meta name="theme-color" content="#2b2f2a">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Shinykitt">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="device">
+  <header class="top">
+    <div class="brand">SHINYKITT</div>
+    <button class="profile-chip" id="profile-chip" type="button">NO PROFILE</button>
+  </header>
+
+  <main class="lcd" id="lcd">
+    <!-- SEARCH -->
+    <section class="screen" id="screen-search" data-screen="search">
+      <div class="empty-card" id="search-needs-profile" hidden>
+        <p>Add a profile first: your game, Trainer ID and Secret ID.</p>
+        <button class="btn" data-go="setup" type="button">Go to Setup</button>
+      </div>
+      <div id="search-body">
+        <div class="row">
+          <label class="field grow">Pokémon
+            <select id="s-mon"></select>
+          </label>
+        </div>
+        <div class="row wrap">
+          <label class="check"><input type="checkbox" id="s-shiny" checked> Shiny only</label>
+          <label class="field">Nature
+            <select id="s-nature"><option value="">Any</option></select>
+          </label>
+          <label class="field">Lead
+            <select id="s-lead">
+              <option value="255">None</option>
+              <option value="sync">Synchronize (nature)</option>
+            </select>
+          </label>
+        </div>
+        <details class="more">
+          <summary>Minimum IVs</summary>
+          <div class="ivs" id="s-ivs"></div>
+        </details>
+        <div class="row wrap" id="s-gen3-range">
+          <label class="field">From frame<input id="s-adv-min" inputmode="numeric" value="0"></label>
+          <label class="field">To frame<input id="s-adv-max" inputmode="numeric" value="60000"></label>
+        </div>
+        <div class="row wrap" id="s-gen4-range" hidden>
+          <label class="field">Delay from<input id="s-delay-min" inputmode="numeric" value="600"></label>
+          <label class="field">to<input id="s-delay-max" inputmode="numeric" value="1100"></label>
+          <label class="field">Max advances<input id="s-adv4" inputmode="numeric" value="15"></label>
+          <label class="field">DS year<input id="s-year" inputmode="numeric" value="2009"></label>
+        </div>
+        <button class="btn primary wide" id="s-go" type="button">Search</button>
+        <p class="status" id="s-status" aria-live="polite"></p>
+        <ol class="results" id="s-results"></ol>
+      </div>
+    </section>
+
+    <!-- TIMER -->
+    <section class="screen" id="screen-timer" data-screen="timer" hidden>
+      <div class="target" id="t-target">No target yet. Pick one from Search, or set the numbers below.</div>
+      <div class="clock" aria-live="off">
+        <div class="phase" id="t-phase">READY</div>
+        <div class="digits" id="t-digits">0:00.000</div>
+        <div class="beeps" id="t-beeps" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i></div>
+      </div>
+      <button class="btn start" id="t-start" type="button">START</button>
+      <p class="instructions" id="t-instructions"></p>
+      <div class="timer-fields" id="t-fields"></div>
+      <div class="calibrate" id="t-calibrate"></div>
+    </section>
+
+    <!-- LOG -->
+    <section class="screen" id="screen-log" data-screen="log" hidden>
+      <div class="row">
+        <button class="btn primary grow" id="l-copy" type="button">Copy for Claude</button>
+      </div>
+      <textarea id="l-copy-fallback" class="copy-fallback" readonly hidden></textarea>
+      <ol class="log" id="l-list"></ol>
+    </section>
+
+    <!-- SETUP -->
+    <section class="screen" id="screen-setup" data-screen="setup" hidden>
+      <h2>Profiles</h2>
+      <ul class="profiles" id="p-list"></ul>
+      <form class="card" id="p-form" autocomplete="off">
+        <h3 id="p-form-title">New profile</h3>
+        <label class="field">Name<input id="p-name" placeholder="e.g. JPN Emerald"></label>
+        <label class="field">Game
+          <select id="p-game">
+            <option value="emerald">Emerald</option>
+            <option value="ruby">Ruby</option>
+            <option value="sapphire">Sapphire</option>
+            <option value="diamond">Diamond</option>
+            <option value="pearl">Pearl</option>
+            <option value="platinum">Platinum</option>
+            <option value="heartgold">HeartGold</option>
+            <option value="soulsilver">SoulSilver</option>
+          </select>
+        </label>
+        <div class="row">
+          <label class="field grow">Trainer ID<input id="p-tid" inputmode="numeric" placeholder="0–65535"></label>
+          <label class="field grow">Secret ID<input id="p-sid" inputmode="numeric" placeholder="0–65535"></label>
+        </div>
+        <label class="field" id="p-console-wrap">Console
+          <select id="p-console">
+            <option value="ndsslot2">DS Lite (GBA slot)</option>
+            <option value="gba">Game Boy Advance / SP</option>
+          </select>
+        </label>
+        <label class="check" id="p-dead-wrap"><input type="checkbox" id="p-dead"> Dead battery (seed 5A0)</label>
+        <div class="row">
+          <button class="btn primary grow" type="submit">Save profile</button>
+          <button class="btn" type="button" id="p-cancel">Clear</button>
+        </div>
+      </form>
+
+      <details class="card">
+        <summary><h3>Find my Secret ID</h3></summary>
+        <p class="hint">Use a Pokémon you caught on this save. Enter its exact IVs (an IV calculator gives them from its stats) and nature. If it's shiny, you get every Secret ID that would make it shiny; one of them is yours.</p>
+        <div class="row">
+          <label class="field grow">Trainer ID<input id="f-tid" inputmode="numeric"></label>
+          <label class="field grow">Nature<select id="f-nature"></select></label>
+        </div>
+        <div class="ivs" id="f-ivs"></div>
+        <label class="check"><input type="checkbox" id="f-shiny" checked> It's shiny</label>
+        <button class="btn primary wide" id="f-go" type="button">Find candidates</button>
+        <ol class="results" id="f-results"></ol>
+      </details>
+
+      <details class="card">
+        <summary><h3>About</h3></summary>
+        <p class="hint">Searches run on your phone with <a href="https://github.com/Admiral-Fish/PokeFinder">PokéFinder</a>'s engine (GPL-3.0), compiled for the browser. Timer maths follow <a href="https://github.com/DasAmpharos/EonTimer">EonTimer</a> (MIT). Source: <a href="https://github.com/vexvtious/shinykitt">github.com/vexvtious/shinykitt</a>.</p>
+        <p class="hint" id="about-engine">Engine: loading…</p>
+        <p class="hint" id="about-offline"></p>
+      </details>
+    </section>
+  </main>
+
+  <nav class="tabs" aria-label="Sections">
+    <button type="button" data-go="search" aria-current="page">SEARCH</button>
+    <button type="button" data-go="timer">TIMER</button>
+    <button type="button" data-go="log">LOG</button>
+    <button type="button" data-go="setup">SETUP</button>
+  </nav>
+</div>
+<div class="toast" id="toast" role="status" hidden></div>
+<script src="app.js" type="module"></script>
+</body>
+</html>
