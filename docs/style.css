@@ -118,3 +118,4 @@ h2, h3 { font-family: var(--f-display); font-size: 10px; margin: 4px 0 10px; let
 .toast { position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(env(safe-area-inset-bottom, 0px) + 84px); background: #000; color: var(--lcd-hi); font-family: var(--f-display); font-size: 9px; padding: 10px 14px; border-radius: 4px; z-index: 10; max-width: 90vw; text-align: center; }
 
 @media (prefers-reduced-motion: reduce) { .lcd.flash { animation: none; } }
+.field .big { font-family: var(--f-screen); font-size: 22px; text-transform: none; letter-spacing: 0; padding: 6px 0; }

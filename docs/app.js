@@ -84,6 +84,8 @@ function fillForm(p) {
   $('#p-console').value = p?.console || 'ndsslot2';
   $('#p-dead').checked = !!p?.deadBattery;
   $('#p-seed').value = p?.seed || '';
+  $('#p-record').value = p?.recordAdvance ?? '';
+  $('#p-paint').value = p?.paintings || '';
   $('#p-notes').value = p?.notes || '';
   updateFormVisibility();
   $('#p-form').scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -93,6 +95,8 @@ function updateFormVisibility() {
   $('#p-console-wrap').hidden = !isGen3(g);
   $('#p-dead-wrap').hidden = !(g === 'ruby' || g === 'sapphire');
   $('#p-seed-wrap').hidden = !isGen3(g);
+  $('#p-record-wrap').hidden = !isGen3(g);
+  $('#p-paint-wrap').hidden = !isGen3(g);
 }
 $('#p-game').addEventListener('change', updateFormVisibility);
 $('#p-cancel').addEventListener('click', () => fillForm(null));
@@ -103,7 +107,13 @@ $('#p-form').addEventListener('submit', (e) => {
   const base = editingId ? profiles.find((p) => p.id === editingId) : { id: 'p' + Date.now(), cal: {} };
   const seed = $('#p-seed').value.trim().toUpperCase().replace(/^0X/, '');
   if (seed && !/^[0-9A-F]{1,8}$/.test(seed)) { toast('Starting seed must be hex, like 0B1A'); return; }
-  Object.assign(base, { name: $('#p-name').value.trim(), game: $('#p-game').value, tid, sid, console: $('#p-console').value, deadBattery: $('#p-dead').checked, seed, notes: $('#p-notes').value.trim() });
+  const rec = $('#p-record').value.trim();
+  const recordAdvance = rec === '' ? null : parseInt(rec.replace(/[, ]/g, ''), 10);
+  if (rec !== '' && !(recordAdvance >= 0)) { toast('Battle Record advance must be a number'); return; }
+  if (recordAdvance != null && !seed) { toast('Add the starting seed the Battle Record was made on'); return; }
+  const paintings = $('#p-paint').value.trim().toUpperCase();
+  if (paintings && !parsePaintings(paintings).length) { toast('Painting seeds should look like B0C-B27, 0C27'); return; }
+  Object.assign(base, { name: $('#p-name').value.trim(), game: $('#p-game').value, tid, sid, console: $('#p-console').value, deadBattery: $('#p-dead').checked, seed, recordAdvance, paintings, notes: $('#p-notes').value.trim() });
   if (!editingId) profiles.push(base);
   activeId = base.id; saveProfiles(); renderChip(); fillForm(null); renderProfiles(); loadMons();
   toast('Profile saved');
@@ -121,6 +131,21 @@ $('#f-go').addEventListener('click', async () => {
     : '<li class="static">No PID matches these IVs and nature. Double-check the IVs: they must be exact.</li>';
 });
 
+// Painting seeds: "B0C-B27, 0C27" -> [0xB0C..0xB27, 0xC27]
+function parsePaintings(text) {
+  const out = [];
+  for (const part of String(text || '').split(/[\s,;]+/).filter(Boolean)) {
+    const m = part.match(/^([0-9A-F]{1,4})(?:[-–]([0-9A-F]{1,4}))?$/i);
+    if (!m) return [];
+    const a = parseInt(m[1], 16), b = m[2] ? parseInt(m[2], 16) : a;
+    if (b < a || b - a > 512) return [];
+    for (let x = a; x <= b; x++) out.push(x);
+  }
+  return [...new Set(out)];
+}
+const hex4 = (n) => n.toString(16).toUpperCase().padStart(4, '0');
+const recordMode = (p) => isGen3(p?.game) && Number.isFinite(p?.recordAdvance) && p.recordAdvance >= 0 && !!p.seed;
+
 // ------------------------------------------------------------ search
 let catalogue = [];
 async function loadMons() {
@@ -130,6 +155,11 @@ async function loadMons() {
   $('#s-gen3-range').hidden = !isGen3(p.game);
   $('#s-gen4-range').hidden = isGen3(p.game);
   $('#s-lead').closest('.field').hidden = isGen3(p.game);
+  $('#s-paint').hidden = !(isGen3(p.game) && parsePaintings(p.paintings).length);
+  if (recordMode(p) && (+$('#s-adv-min').value || 0) < p.recordAdvance) {
+    $('#s-adv-min').value = p.recordAdvance;
+    $('#s-adv-max').value = p.recordAdvance + 200000;
+  }
   const out = await engine('listStatic', { game: p.game });
   if (!out.ok) { $('#s-status').textContent = out.error; return; }
   catalogue = out.categories;
@@ -171,15 +201,47 @@ $('#s-go').addEventListener('click', async () => {
   status.textContent = out.results.length ? `${out.count}${out.complete === false ? '+' : ''} matches for ${name} (${(out.ms / 1000).toFixed(1)} s). Tap one to make it your target.${seedNote}` : `No matches for ${name}. Widen the range or loosen the filters.${seedNote}`;
   list.innerHTML = out.results.map((r, i) => isGen3(p.game)
     ? `<li data-i="${i}"><span class="big">Frame ${r.advances.toLocaleString()}</span><span class="tag ${r.shiny ? 'shiny' : ''}">${r.shiny ? '★ SHINY' : 'PID ' + r.pid}</span>
-       <span class="sub">${r.nature} ${genderTxt(r.gender)} · IVs ${ivText(r.ivs)} · HP ${r.hiddenPower} · ≈${fmtDuration(framesToMs(p, r.advances))} after boot</span></li>`
+       <span class="sub">${r.nature} ${genderTxt(r.gender)} · IVs ${ivText(r.ivs)} · HP ${r.hiddenPower} · ${gen3WaitText(p, r.advances)}</span></li>`
     : `<li data-i="${i}"><span class="big">Delay ${r.delay} · +${r.advances}</span><span class="tag ${r.shiny ? 'shiny' : ''}">${r.shiny ? '★ SHINY' : 'PID ' + r.pid}</span>
        <span class="sub">${r.nature} ${genderTxt(r.gender)} · IVs ${ivText(r.ivs)} · seed ${r.seed} · hour ${r.hour} · ${p.game === 'heartgold' || p.game === 'soulsilver' ? 'call ' + r.call : 'Chatot ' + r.chatot}</span></li>`).join('');
   list.querySelectorAll('li[data-i]').forEach((li) => li.onclick = () => chooseResult(p, name, out.results[+li.dataset.i], li));
 });
 
+$('#s-paint').addEventListener('click', async () => {
+  const p = active(); if (!p) return;
+  const seeds = parsePaintings(p.paintings);
+  const [category, index] = $('#s-mon').value.split(':').map(Number);
+  const natureSel = $('#s-nature').value;
+  const status = $('#s-status'), list = $('#s-results');
+  const maxAdv = Math.max(1000, (+$('#s-adv-max').value || 400000));
+  list.innerHTML = ''; $('#s-paint').disabled = true;
+  const rows = [];
+  for (let i = 0; i < seeds.length; i++) {
+    status.textContent = `Checking painting seed ${hex4(seeds[i])} (${i + 1} of ${seeds.length})…`;
+    const out = await engine('gen3Static', { game: p.game, tid: p.tid, sid: p.sid, category, index, seed: seeds[i], shinyOnly: $('#s-shiny').checked, ivMin: readIVs('siv'),
+      ...(natureSel !== '' ? { natures: [+natureSel] } : {}), initialAdvances: 0, maxAdvances: maxAdv, limit: 1 });
+    rows.push({ seed: seeds[i], r: out.ok && out.results[0] ? out.results[0] : null });
+  }
+  $('#s-paint').disabled = false;
+  rows.sort((a, b) => (a.r ? a.r.advances : Infinity) - (b.r ? b.r.advances : Infinity));
+  const name = monName($('#s-mon').value);
+  status.textContent = `First matching ${name} after each painting seed, earliest first (up to advance ${maxAdv.toLocaleString()}). Use it to pick the seed for your next Battle Video.`;
+  list.innerHTML = rows.map(({ seed, r }) => r
+    ? `<li class="static"><span class="big">Seed ${hex4(seed)} → ${r.advances.toLocaleString()}</span><span class="tag ${r.shiny ? 'shiny' : ''}">${r.shiny ? '★ SHINY' : 'PID ' + r.pid}</span>
+       <span class="sub">${r.nature} ${genderTxt(r.gender)} · IVs ${ivText(r.ivs)} · ≈${fmtDuration(framesToMs(p, r.advances))} of advancing</span></li>`
+    : `<li class="static"><span class="big">Seed ${hex4(seed)}</span><span class="sub">No match before advance ${maxAdv.toLocaleString()}</span></li>`).join('');
+});
+
+function gen3WaitText(p, adv) {
+  if (!recordMode(p)) return `≈${fmtDuration(framesToMs(p, adv))} after boot`;
+  const wait = adv - p.recordAdvance;
+  return wait < 0 ? 'before your Battle Record point' : `wait ${wait.toLocaleString()} after Battle Record (≈${fmtDuration(framesToMs(p, wait))})`;
+}
 async function chooseResult(p, name, r, li) {
   if (isGen3(p.game)) {
-    setTarget({ gen: 3, game: p.game, profileId: p.id, mon: name, frame: r.advances, summary: `${name} · frame ${r.advances} · ${r.nature} · ${ivText(r.ivs)}${r.shiny ? ' · shiny' : ''}`, pid: r.pid });
+    if (recordMode(p) && r.advances < p.recordAdvance) { toast('That frame is before your Battle Record point'); return; }
+    setTarget({ gen: 3, game: p.game, profileId: p.id, mon: name, frame: r.advances, seed: p.seed || null, record: recordMode(p),
+      summary: `${name} · ${p.seed ? 'seed ' + p.seed + ' · ' : ''}advance ${r.advances.toLocaleString()} · ${r.nature} · ${ivText(r.ivs)}${r.shiny ? ' · shiny' : ''}`, pid: r.pid });
     go('timer'); return;
   }
   // Gen 4: pick the boot date/time that produces this seed
@@ -212,6 +274,8 @@ function framesToMs(p, frames) { return toMs(consoleOf(p), frames); }
 function fmtDuration(ms) { const s = Math.round(ms / 1000); const m = Math.floor(s / 60); return m ? `${m}m ${s % 60}s` : `${s}s`; }
 
 function calOf(p) { p.cal = p.cal || {}; return p.cal; }
+const recordWait = (p) => (calOf(p).lastFrame ?? p.recordAdvance) - p.recordAdvance - (calOf(p).recordOffset ?? 0);
+function recordPhases(p) { return [calOf(p).preTimer ?? 5000, Math.max(0, toMs(consoleOf(p), recordWait(p)))]; }
 function gen3Phases(p, frame) { const c = calOf(p); return [c.preTimer ?? 5000, toMs(consoleOf(p), frame) + (c.calibration ?? 0)]; }
 function gen4Calibration(p) { const c = calOf(p); return toMs('ndsslot1', (c.calDelay ?? 500) - toDelays('ndsslot1', (c.calSecond ?? 14) * 1000)); }
 function gen4Phases(p, delay, second, withCal = true) {
@@ -230,7 +294,24 @@ function renderTimer() {
   if (!p) { tgt.textContent = 'Add a profile in Setup first.'; fields.innerHTML = calib.innerHTML = ins.textContent = ''; return; }
   const c = calOf(p);
   const t = target && target.profileId === p.id ? target : null;
-  if (isGen3(p.game)) {
+  if (recordMode(p)) {
+    const frame = t?.frame ?? c.lastFrame ?? p.recordAdvance + 10000;
+    tgt.innerHTML = t ? `<b>TARGET · ${esc(GAME_NAME[p.game])} · BATTLE RECORD</b>${esc(t.summary)}` : `<b>${esc(GAME_NAME[p.game])} · BATTLE RECORD</b>No target picked. Set an advance below.`;
+    fields.innerHTML = `
+      <label class="field">Target advance<input id="tm-frame" inputmode="numeric" value="${frame}"></label>
+      <label class="field">Battle Record advance<input id="tm-record" inputmode="numeric" value="${p.recordAdvance}"></label>
+      <label class="field">Offset (advances)<input id="tm-offset" inputmode="numeric" value="${c.recordOffset ?? 0}"></label>
+      <label class="field">Pre-timer (ms)<input id="tm-pre" inputmode="numeric" value="${c.preTimer ?? 5000}"></label>
+      <label class="field">Console<select id="tm-console"><option value="ndsslot2">DS Lite (GBA slot)</option><option value="gba">GBA / SP</option></select></label>
+      <div class="field" style="grid-column:1/-1">Wait after the record<span class="big" id="tm-wait"></span></div>`;
+    $('#tm-console').value = consoleOf(p);
+    ins.innerHTML = `1. Stand in front of the Pokémon. Open your Trainer Card and highlight <b>Battle Record</b>, but don't press A yet.<br>
+      2. Press START. When phase 1 ends, press A to play the record (this resets the RNG to seed ${esc(p.seed)}, advance ${p.recordAdvance.toLocaleString()}).<br>
+      3. Let it finish and close the menus.<br>4. When phase 2 ends (the 6th beep), press A to start the encounter.`;
+    calib.innerHTML = `<label class="field">Advance you actually hit<input id="tm-hit" inputmode="numeric" placeholder="search your result's IVs/nature on this seed"></label>
+      <button class="btn wide" id="tm-apply" type="button">Update offset</button>
+      <p class="hint">Search seed ${esc(p.seed)} around your target for the nature and IVs you got, and enter that advance. If you hit late, the offset grows and the next wait gets shorter (your sheet's "aimed 301,364, hit 301,634 → 270").</p>`;
+  } else if (isGen3(p.game)) {
     const frame = t?.frame ?? c.lastFrame ?? 1000;
     tgt.innerHTML = t ? `<b>TARGET · ${esc(GAME_NAME[p.game])}</b>${esc(t.summary)}` : `<b>${esc(GAME_NAME[p.game])}</b>No target picked. Set a frame below.`;
     fields.innerHTML = `
@@ -272,18 +353,22 @@ function renderTimer() {
 }
 function saveTimerFields(p) {
   const c = calOf(p); const n = (id, d) => { const v = parseInt($(id)?.value, 10); return Number.isFinite(v) ? v : d; };
-  if (isGen3(p.game)) { c.lastFrame = n('#tm-frame', 1000); c.preTimer = n('#tm-pre', 5000); c.calibration = n('#tm-cal', 0); p.console = $('#tm-console').value; }
+  if (recordMode(p)) {
+    c.lastFrame = n('#tm-frame', p.recordAdvance); p.recordAdvance = n('#tm-record', p.recordAdvance); c.recordOffset = n('#tm-offset', 0); c.preTimer = n('#tm-pre', 5000); p.console = $('#tm-console').value;
+    const w = $('#tm-wait'); if (w) { const wait = recordWait(p); w.textContent = wait < 0 ? 'target is before the record' : `${wait.toLocaleString()} adv · ${fmtDuration(framesToMs(p, wait))}`; }
+  } else if (isGen3(p.game)) { c.lastFrame = n('#tm-frame', 1000); c.preTimer = n('#tm-pre', 5000); c.calibration = n('#tm-cal', 0); p.console = $('#tm-console').value; }
   else { c.lastDelay = n('#tm-delay', 600); c.lastSecond = n('#tm-second', 50); c.calDelay = n('#tm-cdelay', 500); c.calSecond = n('#tm-csecond', 14); }
   saveProfiles(); drawIdle(p);
 }
 function currentPhases(p) {
   saveTimerFields(p);
   const c = calOf(p);
+  if (recordMode(p)) { if (recordWait(p) < 0) toast('Target is before the Battle Record point'); return recordPhases(p); }
   return isGen3(p.game) ? gen3Phases(p, c.lastFrame) : gen4Phases(p, c.lastDelay, c.lastSecond);
 }
 function drawIdle(p) {
   if (run) return;
-  const ph = isGen3(p.game) ? gen3Phases(p, calOf(p).lastFrame ?? 1000) : gen4Phases(p, calOf(p).lastDelay ?? 600, calOf(p).lastSecond ?? 50);
+  const ph = recordMode(p) ? recordPhases(p) : isGen3(p.game) ? gen3Phases(p, calOf(p).lastFrame ?? 1000) : gen4Phases(p, calOf(p).lastDelay ?? 600, calOf(p).lastSecond ?? 50);
   $('#t-phase').textContent = `READY · ${ph.map((x) => (x / 1000).toFixed(3) + 's').join(' + ')}`;
   $('#t-digits').textContent = fmtClock(ph[0]);
 }
@@ -347,7 +432,11 @@ function applyCalibration(p) {
   if (!Number.isFinite(hit)) { toast('Enter what you hit first'); return; }
   const c = calOf(p);
   let note;
-  if (isGen3(p.game)) {
+  if (recordMode(p)) {
+    const tgt = c.lastFrame;
+    c.recordOffset = (c.recordOffset ?? 0) + (hit - tgt);
+    note = `Seed ${p.seed} · record ${p.recordAdvance} · aimed ${tgt}, hit ${hit} (${hit - tgt >= 0 ? '+' : ''}${hit - tgt}) → offset now ${c.recordOffset}`;
+  } else if (isGen3(p.game)) {
     const tgt = c.lastFrame ?? 1000;
     const adj = toMs(consoleOf(p), tgt - hit);
     c.calibration = (c.calibration ?? 0) + adj;
@@ -373,7 +462,7 @@ function claudeText() {
   const p = profileFor(target) || active();
   const lines = ['Shinykitt status', `Date: ${new Date().toString()}`];
   if (p) {
-    lines.push(`Profile: ${p.name || ''} | ${GAME_NAME[p.game]} | TID ${p.tid} | SID ${p.sid}${isGen3(p.game) ? ` | console ${consoleOf(p)}${p.deadBattery ? ' | dead battery' : ''}${p.seed ? ' | seed ' + p.seed : ''}` : ''}${p.notes ? ' | notes: ' + p.notes : ''}`);
+    lines.push(`Profile: ${p.name || ''} | ${GAME_NAME[p.game]} | TID ${p.tid} | SID ${p.sid}${isGen3(p.game) ? ` | console ${consoleOf(p)}${p.deadBattery ? ' | dead battery' : ''}${p.seed ? ' | seed ' + p.seed : ''}${recordMode(p) ? ' | Battle Record advance ' + p.recordAdvance : ''}${p.paintings ? ' | painting seeds ' + p.paintings : ''}` : ''}${p.notes ? ' | notes: ' + p.notes : ''}`);
     lines.push(`Calibration: ${JSON.stringify(calOf(p))}`);
   }
   if (target) lines.push(`Target: ${target.summary}${target.gen === 4 ? ` | boot ${target.date} ${target.hour}:${String(target.minute).padStart(2, '0')}:${String(target.second).padStart(2, '0')} | delay ${target.delay}` : ` | frame ${target.frame}`}`);
@@ -390,7 +479,7 @@ $('#l-copy').addEventListener('click', async () => {
 // ------------------------------------------------------------ import / export links (#import=<base64url JSON>)
 const b64e = (o) => btoa(unescape(encodeURIComponent(JSON.stringify(o)))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 const b64d = (s) => JSON.parse(decodeURIComponent(escape(atob(s.replace(/-/g, '+').replace(/_/g, '/')))));
-const PROFILE_KEYS = ['name', 'game', 'tid', 'sid', 'console', 'deadBattery', 'seed', 'notes', 'cal'];
+const PROFILE_KEYS = ['name', 'game', 'tid', 'sid', 'console', 'deadBattery', 'seed', 'recordAdvance', 'paintings', 'notes', 'cal'];
 function importFromHash() {
   const m = location.hash.match(/^#import=([A-Za-z0-9_-]+)$/);
   if (!m) return;

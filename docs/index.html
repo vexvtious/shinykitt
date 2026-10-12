@@ -62,6 +62,7 @@
           <label class="field">DS year<input id="s-year" inputmode="numeric" value="2009"></label>
         </div>
         <button class="btn primary wide" id="s-go" type="button">Search</button>
+        <button class="btn wide" id="s-paint" type="button" hidden>Compare painting seeds</button>
         <p class="status" id="s-status" aria-live="polite"></p>
         <ol class="results" id="s-results"></ol>
       </div>
@@ -121,7 +122,9 @@
         </label>
         <label class="check" id="p-dead-wrap"><input type="checkbox" id="p-dead"> Dead battery (seed 5A0)</label>
         <label class="field" id="p-seed-wrap">Starting seed (hex, optional)<input id="p-seed" placeholder="Emerald 0 · e.g. 0B1A from Battle Record or painting" autocapitalize="characters"></label>
-        <label class="field">Notes<input id="p-notes" placeholder="e.g. painting seeds B0C–B27"></label>
+        <label class="field" id="p-record-wrap">Battle Record advance (optional)<input id="p-record" inputmode="numeric" placeholder="where the record puts the RNG, e.g. 216599"></label>
+        <label class="field" id="p-paint-wrap">Painting seeds (optional)<input id="p-paint" placeholder="e.g. B0C-B27, 0C27" autocapitalize="characters"></label>
+        <label class="field">Notes<input id="p-notes" placeholder="anything you want to remember"></label>
         <div class="row">
           <button class="btn primary grow" type="submit">Save profile</button>
           <button class="btn" type="button" id="p-cancel">Clear</button>

@@ -47,7 +47,7 @@ PokéFinder Core was built from this pinned commit and checked against PokéFind
 
 ## Not covered yet
 
-Gen 3 and Gen 4 wild and egg RNG, the Cute Charm TID/SID setup, Battle Video and painting reseeding, Gen 5 (Black 2), and Gen 7 (3DSRNGTool is still the tool for Ultra Sun).
+Gen 3 and Gen 4 wild and egg RNG, the Cute Charm TID/SID setup, Gen 5 (Black 2), and Gen 7 (3DSRNGTool is still the tool for Ultra Sun).
 
 ## Licences and credits
 
