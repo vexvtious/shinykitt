@@ -169,7 +169,7 @@ $('#id-go').addEventListener('click', async () => {
     return;
   }
   status.textContent = out.results.length
-    ? `${out.results.length}${out.complete ? '' : '+'} IDs (${(out.ms / 1000).toFixed(1)} s), lowest delay first. Tap one to pick a boot time.`
+    ? `${out.results.length}${out.complete ? '' : '+'} IDs (${(out.ms / 1000).toFixed(1)} s), lowest delay first. Tap one to set the timer.`
     : 'No IDs in that delay window. Widen it or loosen the filters.';
   list.innerHTML = out.results.map((r, i) => {
     const nat = cc ? ccSummary(r, cc) : [];
@@ -180,21 +180,20 @@ $('#id-go').addEventListener('click', async () => {
   list.querySelectorAll('li[data-i]').forEach((li) => li.onclick = () => chooseID(game, q.year, out.results[+li.dataset.i], li, cc));
 });
 async function chooseID(game, year, r, li, cc) {
-  if (li.nextElementSibling?.classList.contains('pick-times')) { li.nextElementSibling.remove(); return; }
-  const t = await engine('gen4SeedTimes', { seed: r.seed, year, limit: 40 });
-  if (!t.ok) { toast(t.error); return; }
-  li.insertAdjacentHTML('afterend', `<li class="static pick-times"><span class="sub" style="grid-column:1/-1">Pick a boot date and time for TID ${r.tid} / SID ${r.sid}:</span>
-    <ul class="times" style="grid-column:1/-1">${t.results.map((x, i) => `<li data-t="${i}"><span>${x.date} ${x.time}</span><span>delay ${x.delay}</span></li>`).join('')}</ul></li>`);
-  li.nextElementSibling.querySelectorAll('[data-t]').forEach((el) => el.onclick = (e) => {
-    e.stopPropagation();
-    const x = t.results[+el.dataset.t];
-    const [hh, mm, ss] = x.time.split(':').map(Number);
-    const nat = cc ? ccSummary(r, cc) : [];
-    setTarget({ kind: 'id', gen: 4, game, profileId: '__id', tid: r.tid, sid: r.sid, delay: x.delay, second: ss, date: x.date, hour: hh, minute: mm, seed: r.seed, cuteCharm: r.cuteCharm,
-      summary: `New ${GAME_NAME[game]} save · TID ${r.tid} / SID ${r.sid} · seed ${r.seed} · delay ${x.delay}${nat.length ? ' · Cute Charm ' + natureList(nat) : ''}` });
-    idProfileCache = null;
-    go('timer');
-  });
+  const x = await firstBootTime(r.seed, year); if (!x) return;
+  const nat = cc ? ccSummary(r, cc) : [];
+  setTarget({ kind: 'id', gen: 4, game, profileId: '__id', tid: r.tid, sid: r.sid, year, ...x, seed: r.seed, cuteCharm: r.cuteCharm,
+    summary: `New ${GAME_NAME[game]} save · TID ${r.tid} / SID ${r.sid} · seed ${r.seed}${nat.length ? ' · Cute Charm ' + natureList(nat) : ''}` });
+  idProfileCache = null;
+  go('timer');
+}
+
+// Gen 4 boot times: any listed date/time gives the same seed, so take the first and let the timer screen change it.
+const bootFields = (x) => { const [hh, mm, ss] = x.time.split(':').map(Number); return { date: x.date, hour: hh, minute: mm, second: ss, delay: x.delay }; };
+async function firstBootTime(seed, year) {
+  const t = await engine('gen4SeedTimes', { seed, year, limit: 1 });
+  if (!t.ok || !t.results.length) { toast(t.error || 'No boot time for that seed'); return null; }
+  return bootFields(t.results[0]);
 }
 
 // The ID hunt has no profile yet (that's the point), so the timer uses a stand-in with its own calibration per game.
@@ -393,20 +392,12 @@ async function chooseResult(p, name, r, li, ctx) {
       summary: `${name} · ${how}${p.seed ? 'seed ' + p.seed + ' · ' : ''}advance ${r.advances.toLocaleString()} · ${r.nature} · ${ivText(r.ivs)}${r.shiny ? ' · shiny' : ''}`, pid: r.pid });
     go('timer'); return;
   }
-  // Gen 4: pick the boot date/time that produces this seed
+  // Gen 4: straight to the timer with the first boot date/time for this seed (changeable there)
   const year = +$('#s-year').value || 2009;
-  const t = await engine('gen4SeedTimes', { seed: r.seed, year, limit: 40 });
-  if (!t.ok) { toast(t.error); return; }
-  li.insertAdjacentHTML('afterend', `<li class="static"><span class="sub" style="grid-column:1/-1">Pick a boot date and time for seed ${r.seed}:</span>
-    <ul class="times" style="grid-column:1/-1">${t.results.map((x, i) => `<li data-t="${i}"><span>${x.date} ${x.time}</span><span>delay ${x.delay}</span></li>`).join('')}</ul></li>`);
-  li.nextElementSibling.querySelectorAll('[data-t]').forEach((el) => el.onclick = (e) => {
-    e.stopPropagation();
-    const x = t.results[+el.dataset.t];
-    const [hh, mm, ss] = x.time.split(':').map(Number);
-    setTarget({ gen: 4, game: p.game, profileId: p.id, mon: name, delay: x.delay, second: ss, date: x.date, hour: hh, minute: mm, seed: r.seed, advances: r.advances, chatot: r.chatot, call: r.call, ctx,
-      summary: `${name} · seed ${r.seed} · delay ${x.delay} · +${r.advances} · ${r.nature} · ${ivText(r.ivs)}${r.shiny ? ' · shiny' : ''}` });
-    go('timer');
-  });
+  const x = await firstBootTime(r.seed, year); if (!x) return;
+  setTarget({ gen: 4, game: p.game, profileId: p.id, mon: name, year, ...x, seed: r.seed, advances: r.advances, chatot: r.chatot, call: r.call, ctx,
+    summary: `${name} · seed ${r.seed} · +${r.advances} · ${r.nature} · ${ivText(r.ivs)}${r.shiny ? ' · shiny' : ''}` });
+  go('timer');
 }
 function setTarget(t) { target = t; store.set('target', t); toast('Target set'); }
 
@@ -475,7 +466,10 @@ function renderTimer() {
       <p class="hint">Find the frame you hit by searching for your result's IVs and nature, then enter it here. The timer shifts by the difference.</p>` + hitFinderHtml(false);
   } else {
     const delay = t?.delay ?? c.lastDelay ?? 600, second = t?.second ?? c.lastSecond ?? 50;
-    tgt.innerHTML = t ? `<b>TARGET · ${esc(GAME_NAME[p.game])}</b>${esc(t.summary)}` : `<b>${esc(GAME_NAME[p.game])}</b>No target picked. Set a delay and second below.`;
+    tgt.innerHTML = t ? `<b>TARGET · ${esc(GAME_NAME[p.game])}</b>${esc(t.summary)}
+      <details class="boot" id="tm-boot"><summary>Boot ${esc(t.date)} ${String(t.hour).padStart(2, '0')}:${String(t.minute).padStart(2, '0')}:${String(t.second).padStart(2, '0')} · delay ${t.delay} · <u>change</u></summary><ul class="times" id="tm-times"><li>Loading…</li></ul></details>`
+      : `<b>${esc(GAME_NAME[p.game])}</b>No target picked. Set a delay and second below.`;
+    if (t) wireBootPicker(t);
     fields.innerHTML = `
       <label class="field">Target delay<input id="tm-delay" inputmode="numeric" value="${delay}"></label>
       <label class="field">Target second<input id="tm-second" inputmode="numeric" value="${second}"></label>
@@ -610,7 +604,7 @@ function applyCalibration(p) {
   }
   attempts.unshift({ when: new Date().toISOString(), game: p.game, profile: p.name || GAME_NAME[p.game], target: target?.summary || '', hit, note });
   attempts = attempts.slice(0, 200); store.set('attempts', attempts);
-  saveProfiles(); renderTimer(); toast('Calibration updated');
+  saveProfiles(); renderTimer(); toast(note.includes('odd miss') ? 'Timer adjusted · check step 4: letter-case change' : 'Timer adjusted. Press START for the next try');
 }
 
 
@@ -652,10 +646,27 @@ function wireHitFinder(p, t) {
       rows = out.results.map((r) => ({ hit: t.delay + r.delayOff, off: r.delayOff, label: `Delay ${t.delay + r.delayOff}${r.secondOff ? ` · second ${r.secondOff > 0 ? '+' : ''}${r.secondOff}` : ''}`, sub: `+${r.advances} advances · ${r.nature} · ${ivText(r.ivs)}${r.secondOff ? ' · you missed the second, check the calibrated second' : ''}` }));
     }
     rows.sort((a, b) => Math.abs(a.off) - Math.abs(b.off));
-    list.innerHTML = rows.length ? rows.map((r, i) => `<li data-h="${i}"><span class="big">${esc(r.label)}</span><span class="tag">${r.off >= 0 ? '+' : ''}${r.off}</span><span class="sub">${esc(r.sub)} · tap to use</span></li>`).join('')
+    list.innerHTML = rows.length ? rows.map((r, i) => `<li data-h="${i}"><span class="big">${esc(r.label)}</span><span class="tag">${r.off >= 0 ? '+' : ''}${r.off}</span><span class="sub">${esc(r.sub)} · tap to calibrate</span></li>`).join('')
       : '<li class="static">No match nearby. Double-check the IVs, widen the search, or try another nature.</li>';
-    list.querySelectorAll('[data-h]').forEach((li) => li.onclick = () => { $('#tm-hit').value = rows[+li.dataset.h].hit; $('#tm-hit').scrollIntoView({ behavior: 'smooth', block: 'center' }); toast('Filled in. Press Update to apply.'); });
+    list.querySelectorAll('[data-h]').forEach((li) => li.onclick = () => { $('#tm-hit').value = rows[+li.dataset.h].hit; applyCalibration(p); $('#t-start').scrollIntoView({ behavior: 'smooth', block: 'center' }); });
   };
+}
+
+// Change the boot date/time on the timer screen (same seed, so the same Pokémon or ID).
+function wireBootPicker(t) {
+  const d = $('#tm-boot'); if (!d) return;
+  d.addEventListener('toggle', async () => {
+    if (!d.open || d.dataset.loaded) return;
+    const out = await engine('gen4SeedTimes', { seed: t.seed, year: t.year || 2009, limit: 40 });
+    d.dataset.loaded = '1';
+    if (!out.ok) { $('#tm-times').innerHTML = `<li>${esc(out.error)}</li>`; return; }
+    $('#tm-times').innerHTML = out.results.map((x, i) => `<li data-bt="${i}"><span>${x.date} ${x.time}</span><span>delay ${x.delay}</span></li>`).join('');
+    $$('#tm-times [data-bt]').forEach((li) => li.onclick = () => {
+      Object.assign(target, bootFields(out.results[+li.dataset.bt])); store.set('target', target);
+      const c = calOf(timingProfile()); c.lastDelay = target.delay; c.lastSecond = target.second;
+      renderTimer(); toast('Boot time changed');
+    });
+  });
 }
 
 // ------------------------------------------------------------ ID hunt timer screen
@@ -694,9 +705,9 @@ function wireIdHit(p, t) {
       const exact = r.delayOff === 0 && r.secondOff === 0;
       return `<li class="static"><span class="big">${exact ? 'Hit it! ' : ''}Delay ${t.delay + r.delayOff}${r.secondOff ? ` · second ${r.secondOff > 0 ? '+' : ''}${r.secondOff}` : ''}</span><span class="tag ${exact ? 'shiny' : ''}">${r.delayOff >= 0 ? '+' : ''}${r.delayOff}</span>
         <span class="sub">TID ${r.tid} · SID ${r.sid}${r.secondOff ? ' · you missed the second: check the clock and the calibrated second' : ''}${r.delayOff % 2 ? ' · odd miss' : ''}</span>
-        <span class="row" style="grid-column:1/-1">${r.secondOff ? '' : `<button class="btn" type="button" data-ihuse="${i}">Use for calibration</button>`}<button class="btn" type="button" data-ihkeep="${i}">${exact ? 'Save as my profile' : 'Keep this ID instead'}</button></span></li>`;
+        <span class="row" style="grid-column:1/-1">${r.secondOff ? '' : `<button class="btn" type="button" data-ihuse="${i}">Calibrate with this</button>`}<button class="btn" type="button" data-ihkeep="${i}">${exact ? 'Save as my profile' : 'Keep this ID instead'}</button></span></li>`;
     }).join('');
-    list.querySelectorAll('[data-ihuse]').forEach((b) => b.onclick = () => { $('#tm-hit').value = t.delay + out.results[+b.dataset.ihuse].delayOff; $('#tm-hit').scrollIntoView({ behavior: 'smooth', block: 'center' }); toast('Filled in. Press Update to apply.'); });
+    list.querySelectorAll('[data-ihuse]').forEach((b) => b.onclick = () => { $('#tm-hit').value = t.delay + out.results[+b.dataset.ihuse].delayOff; applyCalibration(p); $('#t-start').scrollIntoView({ behavior: 'smooth', block: 'center' }); });
     list.querySelectorAll('[data-ihkeep]').forEach((b) => b.onclick = () => { const r = out.results[+b.dataset.ihkeep]; saveIdProfile(t, r.tid, r.sid); });
   };
 }
