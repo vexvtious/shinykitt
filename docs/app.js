@@ -191,9 +191,12 @@ async function chooseID(game, year, r, li, cc) {
 // Gen 4 boot times: any listed date/time gives the same seed, so take the first and let the timer screen change it.
 const bootFields = (x) => { const [hh, mm, ss] = x.time.split(':').map(Number); return { date: x.date, hour: hh, minute: mm, second: ss, delay: x.delay }; };
 async function firstBootTime(seed, year) {
-  const t = await engine('gen4SeedTimes', { seed, year, limit: 1 });
+  const t = await engine('gen4SeedTimes', { seed, year, limit: 120 });
   if (!t.ok || !t.results.length) { toast(t.error || 'No boot time for that seed'); return null; }
-  return bootFields(t.results[0]);
+  // Prefer a press time with room on both sides of the minute: pressing a few seconds early or late at :59 rolls
+  // the minute (or the hour, at xx:59:59) and lands on a completely unrelated seed.
+  const safe = t.results.find((x) => { const ss = +x.time.split(':')[2]; return ss >= 10 && ss <= 50; });
+  return bootFields(safe || t.results[0]);
 }
 
 // The ID hunt has no profile yet (that's the point), so the timer uses a stand-in with its own calibration per game.
@@ -669,6 +672,32 @@ function wireBootPicker(t) {
   });
 }
 
+// Look up the TID around the target by walking the real clock second by second, so a press that rolls into the
+// next minute or hour (e.g. 06:59:59 -> 07:00:02) is still found. Pressing late moves the delay and the clock
+// together (about 60 delay per second); a hit where they agree is a timing miss you can calibrate from.
+function seedAt(t, ds) {
+  const [y, mo, d] = t.date.split('-').map(Number);
+  const dt = new Date(Date.UTC(y, mo - 1, d, t.hour, t.minute, t.second + ds));
+  const ab = ((dt.getUTCMonth() + 1) * dt.getUTCDate() + dt.getUTCMinutes() + dt.getUTCSeconds()) & 0xFF;
+  const low = parseInt(t.seed, 16) & 0xFFFF;
+  const p2 = (n) => String(n).padStart(2, '0');
+  return { seed: ((ab << 24) | (dt.getUTCHours() << 16) | low) >>> 0, at: `${p2(dt.getUTCHours())}:${p2(dt.getUTCMinutes())}:${p2(dt.getUTCSeconds())}` };
+}
+async function idHitNear(t, tid, win) {
+  const rows = [];
+  for (let ds = -6; ds <= 8; ds++) {
+    const { seed, at } = seedAt(t, ds);
+    const out = await engine('gen4IDHit', { seed: seed.toString(16).toUpperCase().padStart(8, '0'), tid, delayRange: win, secondRange: 0 });
+    if (!out.ok) return out;
+    for (const r of out.results) {
+      const expect = r.delayOff / 59.8261;
+      rows.push({ ...r, secondOff: ds, at, consistent: Math.abs(ds - expect) <= 1.5, score: Math.abs(r.delayOff) + 60 * Math.max(0, Math.abs(ds - expect) - 1.5) });
+    }
+  }
+  rows.sort((a, b) => a.score - b.score);
+  return { ok: true, results: rows.slice(0, 8) };
+}
+
 // ------------------------------------------------------------ ID hunt timer screen
 function renderIdHunt(p, t, when) {
   const c = calOf(p);
@@ -698,7 +727,7 @@ function wireIdHit(p, t) {
     if (!(tid >= 0 && tid <= 65535)) { toast('Enter the TID from your Trainer Card'); return; }
     if (!t?.seed) { list.innerHTML = '<li class="static">Pick a target ID first, so the lookup knows which seed to search around.</li>'; return; }
     list.innerHTML = '<li class="static">Searching…</li>';
-    const out = await engine('gen4IDHit', { seed: t.seed, tid, delayRange: Math.max(1, parseInt($('#ih-window').value, 10) || 200), secondRange: 2 });
+    const out = await idHitNear(t, tid, Math.max(1, parseInt($('#ih-window').value, 10) || 200));
     if (!out.ok) { list.innerHTML = `<li class="static">${esc(out.error)}</li>`; return; }
     if (!out.results.length) {
       // Nothing near the target: the clock (date, minute or second) or the delay was probably well off. Search wide.
@@ -706,7 +735,7 @@ function wireIdHit(p, t) {
       const wide = await engine('gen4IDHit', { seed: t.seed, tid, delayRange: 1500, secondRange: 128 });
       const seen = new Set();
       const rows = (wide.ok ? wide.results : []).filter((r) => !seen.has(r.seed) && seen.add(r.seed)).slice(0, 6);
-      list.innerHTML = `<li class="static"><span class="sub" style="grid-column:1/-1">No match within ±${$('#ih-window').value || 200} delay and ±2 seconds of the target, so this attempt was off by more than timing. Most often the DS <b>date</b> wasn't changed (it must be ${esc(t.date)}), the clock was confirmed at the wrong minute, or the hour was wrong. Double-check the TID too.</span></li>`
+      list.innerHTML = `<li class="static"><span class="sub" style="grid-column:1/-1">No match within ±${$('#ih-window').value || 200} delay and a few seconds either side of the target, so this attempt was off by more than timing. Most often the DS <b>date</b> wasn't changed (it must be ${esc(t.date)}), the clock was confirmed at the wrong minute, or the hour was wrong. Double-check the TID too.</span></li>`
         + (rows.length ? `<li class="static"><span class="sub" style="grid-column:1/-1">Possible matches further out (guesses: many seeds share a TID, so the SID here isn't certain):</span></li>`
           + rows.map((r) => `<li class="static"><span class="big">Delay ${t.delay + r.delayOff}</span><span class="tag">clock ${r.secondOff > 0 ? '+' : ''}${r.secondOff}</span><span class="sub">TID ${r.tid} · SID ${r.sid}? · "clock ${r.secondOff > 0 ? '+' : ''}${r.secondOff}" means month×day + minute + second came out ${Math.abs(r.secondOff)} ${r.secondOff > 0 ? 'higher' : 'lower'} than the target's</span></li>`).join('')
           : '<li class="static">No match even searching wide, which points to the hour or the TID being different from what the target expects.</li>');
@@ -714,9 +743,13 @@ function wireIdHit(p, t) {
     }
     list.innerHTML = out.results.map((r, i) => {
       const exact = r.delayOff === 0 && r.secondOff === 0;
-      return `<li class="static"><span class="big">${exact ? 'Hit it! ' : ''}Delay ${t.delay + r.delayOff}${r.secondOff ? ` · second ${r.secondOff > 0 ? '+' : ''}${r.secondOff}` : ''}</span><span class="tag ${exact ? 'shiny' : ''}">${r.delayOff >= 0 ? '+' : ''}${r.delayOff}</span>
-        <span class="sub">TID ${r.tid} · SID ${r.sid}${r.secondOff ? ' · you missed the second: check the clock and the calibrated second' : ''}${r.delayOff % 2 ? ' · odd miss' : ''}</span>
-        <span class="row" style="grid-column:1/-1">${r.secondOff ? '' : `<button class="btn" type="button" data-ihuse="${i}">Calibrate with this</button>`}<button class="btn" type="button" data-ihkeep="${i}">${exact ? 'Save as my profile' : 'Keep this ID instead'}</button></span></li>`;
+      const late = r.delayOff > 0 ? 'late' : 'early';
+      const why = r.consistent
+        ? (r.delayOff ? `you pressed A about ${Math.abs(r.delayOff / 59.8261).toFixed(1)} s ${late}` : '')
+        : 'the clock second doesn\'t match the delay: check the DS clock was confirmed exactly when you pressed START, then the calibrated second';
+      return `<li class="static"><span class="big">${exact ? 'Hit it! ' : ''}Delay ${t.delay + r.delayOff} · ${esc(r.at)}</span><span class="tag ${exact ? 'shiny' : ''}">${r.delayOff >= 0 ? '+' : ''}${r.delayOff}</span>
+        <span class="sub">TID ${r.tid} · SID ${r.sid}${why ? ' · ' + why : ''}${r.delayOff % 2 ? ' · odd miss' : ''}</span>
+        <span class="row" style="grid-column:1/-1">${!r.consistent ? '' : exact ? '' : `<button class="btn" type="button" data-ihuse="${i}">Calibrate with this</button>`}<button class="btn" type="button" data-ihkeep="${i}">${exact ? 'Save as my profile' : 'Keep this ID instead'}</button></span></li>`;
     }).join('');
     list.querySelectorAll('[data-ihuse]').forEach((b) => b.onclick = () => { $('#tm-hit').value = t.delay + out.results[+b.dataset.ihuse].delayOff; applyCalibration(p); $('#t-start').scrollIntoView({ behavior: 'smooth', block: 'center' }); });
     list.querySelectorAll('[data-ihkeep]').forEach((b) => b.onclick = () => { const r = out.results[+b.dataset.ihkeep]; saveIdProfile(t, r.tid, r.sid); });
