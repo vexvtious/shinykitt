@@ -523,40 +523,65 @@ function drawIdle(p) {
 }
 function fmtClock(ms) { ms = Math.max(0, ms); const m = Math.floor(ms / 60000), s = Math.floor(ms % 60000 / 1000), r = Math.floor(ms % 1000); return `${m}:${String(s).padStart(2, '0')}.${String(r).padStart(3, '0')}`; }
 
+// Beeps: the 6th beep is what you press on, so it has to sound at the exact phase boundary.
+// - One audio context, made on the first tap and kept (closing it at zero used to cut off the last beep).
+// - Times are mapped from the page clock to the audio clock with getOutputTimestamp(), which accounts for the
+//   delay between scheduling a sound and hearing it; fallback: currentTime minus the reported latencies.
+// - Each phase's beeps are scheduled ~4 s before it ends with a fresh mapping, so the two clocks can't drift apart.
+// - The run starts at the moment of the tap (event.timeStamp), not when the audio finished waking up.
 let audioCtx = null;
+function audioReady() {
+  try { audioCtx = audioCtx && audioCtx.state !== 'closed' ? audioCtx : new (window.AudioContext || window.webkitAudioContext)({ latencyHint: 'interactive' }); }
+  catch { audioCtx = null; }
+  return audioCtx;
+}
+function perfToAudio(ctx) {
+  const ts = ctx.getOutputTimestamp?.();
+  if (ts && ts.performanceTime > 0 && ts.contextTime > 0) return (perf) => ts.contextTime + (perf - ts.performanceTime) / 1000;
+  const lat = (ctx.outputLatency || 0) + (ctx.baseLatency || 0), p0 = performance.now(), c0 = ctx.currentTime;
+  return (perf) => c0 + (perf - p0) / 1000 - lat;
+}
 function beepAt(time, last) {
   const o = audioCtx.createOscillator(), g = audioCtx.createGain();
   o.type = 'square'; o.frequency.value = last ? 1320 : 880;
   g.gain.setValueAtTime(0.0001, time); g.gain.exponentialRampToValueAtTime(0.25, time + 0.005); g.gain.exponentialRampToValueAtTime(0.0001, time + 0.09);
   o.connect(g).connect(audioCtx.destination); o.start(time); o.stop(time + 0.1);
+  return o;
+}
+function scheduleBeeps(run, idx) {
+  if (!audioCtx || audioCtx.state !== 'running' || run.scheduled.has(idx)) return;
+  run.scheduled.add(idx);
+  const end = run.startPerf + run.phases.slice(0, idx + 1).reduce((a, b) => a + b, 0);
+  const toAudio = perfToAudio(audioCtx), now = performance.now();
+  for (let k = 5; k >= 0; k--) {
+    const at = end - k * 500;
+    if (at > now + 15) run.oscs.push(beepAt(toAudio(at), k === 0));
+  }
 }
 let wakeLock = null;
 async function keepAwake(on) {
   try { if (on && 'wakeLock' in navigator) wakeLock = await navigator.wakeLock.request('screen'); else if (!on && wakeLock) { await wakeLock.release(); wakeLock = null; } } catch { /* not allowed here */ }
 }
 
-$('#t-start').addEventListener('click', () => {
+$('#t-start').addEventListener('click', (e) => {
+  const tap = e.timeStamp > 0 && e.timeStamp <= performance.now() ? e.timeStamp : performance.now();
   const p = timingProfile(); if (!p) return;
   if (run) { stopTimer('Stopped'); return; }
-  try { audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)(); audioCtx.resume(); } catch { audioCtx = null; }
+  const ctx = audioReady();
+  try { ctx?.resume(); } catch { /* audio unavailable */ }
   const phases = currentPhases(p);
-  const startPerf = performance.now(), startAudio = audioCtx ? audioCtx.currentTime : 0;
-  // schedule 6 beeps (500 ms apart) ending exactly at each phase boundary
-  if (audioCtx) {
-    let acc = 0;
-    phases.forEach((ph) => { acc += ph; for (let k = 5; k >= 0; k--) { const t = startAudio + (acc - k * 500) / 1000; if (t > startAudio) beepAt(t, k === 0); } });
-  }
-  run = { phases, startPerf, idx: 0 };
+  run = { phases, startPerf: tap, idx: 0, scheduled: new Set(), oscs: [] };
   $('#t-start').textContent = 'STOP'; $('#t-start').classList.add('running');
   keepAwake(true);
   const tick = () => {
     if (!run) return;
-    const el = performance.now() - run.startPerf;
+    const now = performance.now(), el = now - run.startPerf;
     let acc = 0, idx = 0;
     while (idx < run.phases.length && el >= acc + run.phases[idx]) { acc += run.phases[idx]; idx++; }
     if (idx >= run.phases.length) { flash(); try { navigator.vibrate?.(120); } catch { /* no vibration */ } stopTimer('Done'); return; }
     if (idx !== run.idx) { run.idx = idx; flash(); try { navigator.vibrate?.(120); } catch { /* no vibration */ } }
     const left = acc + run.phases[idx] - el;
+    if (left < 4000) scheduleBeeps(run, idx);
     $('#t-phase').textContent = `PHASE ${idx + 1} OF ${run.phases.length}`;
     $('#t-digits').textContent = fmtClock(left);
     const on = left <= 3000 ? 6 - Math.floor(left / 500) : 0;
@@ -568,8 +593,9 @@ $('#t-start').addEventListener('click', () => {
 function flash() { const l = $('#lcd'); l.classList.remove('flash'); void l.offsetWidth; l.classList.add('flash'); }
 function stopTimer(label) {
   if (run?.raf) cancelAnimationFrame(run.raf);
+  // On a manual stop, silence beeps still to come; at Done, leave them alone so the last one plays out in full.
+  if (label !== 'Done') run?.oscs.forEach((o) => { try { o.stop(); } catch { /* already finished */ } });
   run = null; keepAwake(false);
-  if (audioCtx) { try { audioCtx.close(); } catch { /* already closed */ } audioCtx = null; }
   $('#t-start').textContent = 'START'; $('#t-start').classList.remove('running');
   $$('#t-beeps i').forEach((b) => b.classList.remove('on'));
   $('#t-phase').textContent = label.toUpperCase();

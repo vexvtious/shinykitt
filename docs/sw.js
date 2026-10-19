@@ -1,6 +1,6 @@
 // Offline support: the first visit saves every file the app needs; later visits work with no connection.
 // Bump VERSION whenever any file below changes so phones pick up the new copy on their next online launch.
-const VERSION = 'shinykitt-v9';
+const VERSION = 'shinykitt-v10';
 const FILES = [
   './',
   'index.html',
