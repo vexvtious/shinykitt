@@ -172,6 +172,54 @@
         <button class="btn primary wide" id="p-export" type="button">Copy import link</button>
       </details>
 
+      <details class="card" id="id-card">
+        <summary><h3>Pick my TID/SID (Gen 4 new save)</h3></summary>
+        <p class="hint">Starting a new Diamond, Pearl, Platinum, HeartGold or SoulSilver save? Your Trainer ID and Secret ID come from the same boot seed as everything else, so you can pick them. With a <b>Cute Charm</b> ID, a Cute Charm Pokémon leading your party makes wild Pokémon of the opposite gender shiny for several natures at once, all game long.</p>
+        <div class="row wrap">
+          <label class="field">Game
+            <select id="id-game">
+              <option value="heartgold">HeartGold</option>
+              <option value="soulsilver">SoulSilver</option>
+              <option value="platinum">Platinum</option>
+              <option value="diamond">Diamond</option>
+              <option value="pearl">Pearl</option>
+            </select>
+          </label>
+          <label class="field">Cute Charm shinies
+            <select id="id-cc">
+              <option value="">Don't care</option>
+              <option value="female" selected>Females (♂ lead)</option>
+              <option value="male875">Males, 87.5% ♂ species (♀ lead)</option>
+              <option value="male75">Males, 75% ♂ species (♀ lead)</option>
+              <option value="male50">Males, 50/50 species (♀ lead)</option>
+              <option value="male25">Males, 25% ♂ species (♀ lead)</option>
+            </select>
+          </label>
+          <label class="field" id="id-nature-wrap">Must include nature
+            <select id="id-nature"><option value="">Any</option></select>
+          </label>
+        </div>
+        <label class="check" id="id-max-wrap"><input type="checkbox" id="id-max" checked> Most natures shiny (8 of 25)</label>
+        <div class="row">
+          <label class="field grow">Trainer ID (optional)<input id="id-tid" inputmode="numeric" placeholder="any"></label>
+          <label class="field grow">Secret ID (optional)<input id="id-sid" inputmode="numeric" placeholder="any"></label>
+        </div>
+        <details class="more">
+          <summary>Make one PID shiny</summary>
+          <p class="hint">Paste a PID (8 hex digits) from a Search result made with a placeholder ID, and you'll only get IDs that make it shiny. Works alongside the Cute Charm choice only if the two can agree, so set Cute Charm to "Don't care" if you get nothing.</p>
+          <label class="field">PID<input id="id-pid" placeholder="e.g. 3F1A9C02" autocapitalize="characters"></label>
+        </details>
+        <div class="row wrap">
+          <label class="field">Delay from<input id="id-dmin" inputmode="numeric" value="5000"></label>
+          <label class="field">to<input id="id-dmax" inputmode="numeric" value="5600"></label>
+          <label class="field">DS year<input id="id-year" inputmode="numeric" value="2009"></label>
+        </div>
+        <p class="hint">Delay is how long you have from opening the game to the last screen before your ID is set. The intro takes a while, so 5000 (about 84 seconds) is a good floor. Go higher if you can't get there in time.</p>
+        <button class="btn primary wide" id="id-go" type="button">Find IDs</button>
+        <p class="status" id="id-status" aria-live="polite"></p>
+        <ol class="results" id="id-results"></ol>
+      </details>
+
       <details class="card">
         <summary><h3>Find my Secret ID</h3></summary>
         <p class="hint">Use a Pokémon you caught on this save. Enter its exact IVs (an IV calculator gives them from its stats) and nature. If it's shiny, you get every Secret ID that would make it shiny; one of them is yours.</p>

@@ -23,6 +23,7 @@
 #undef private
 #include <Core/Gen3/Generators/GameCubeGenerator.hpp>
 #include <Core/RNG/LCRNG.hpp>
+#include <Core/RNG/MT.hpp>
 
 #include <Core/Enum/Game.hpp>
 #include <Core/Enum/Lead.hpp>
@@ -505,6 +506,180 @@ namespace
         return { { "count", times.size() }, { "results", out } };
     }
 
+    // ------------------------------------------------------------------ Gen 4 TID/SID (new save)
+    // The game seeds its Mersenne Twister with the usual boot seed (date, time, delay) when you
+    // press A on the last screen before the ID is set; TID is the low half of its second output, SID the high half.
+    // Same maths as PokéFinder's IDGenerator4/IDSearcher4, inlined because WebAssembly here has no threads.
+    std::pair<u16, u16> id4(u32 seed)
+    {
+        MTFast mt(seed, 1, 2);
+        u32 sidtid = mt.next();
+        return { static_cast<u16>(sidtid & 0xFFFF), static_cast<u16>(sidtid >> 16) };
+    }
+
+    // Cute Charm PIDs are buffer + nature (0-24). Male lead -> buffer 0 (shiny females, any gender ratio);
+    // female lead -> 25 * (genderRatio / 25 + 1) (shiny males of that ratio). Same as WildGenerator4.
+    struct CuteCharmTarget { const char *key; const char *label; u8 buffer; };
+    const CuteCharmTarget CUTE_CHARM[] = { { "female", "Females (♂ Cute Charm lead)", 0 },
+                                           { "male875", "Males, 87.5% ♂ species (♀ lead)", 50 },
+                                           { "male75", "Males, 75% ♂ species (♀ lead)", 75 },
+                                           { "male50", "Males, 50/50 species (♀ lead)", 150 },
+                                           { "male25", "Males, 25% ♂ species (♀ lead)", 200 } };
+
+    // Natures that come out shiny under Cute Charm for this TID^SID and buffer.
+    std::vector<int> cuteCharmShinyNatures(u16 xr, u8 buffer)
+    {
+        std::vector<int> out;
+        for (int n = 0; n < 25; n++)
+            if ((xr ^ (buffer + n)) < 8) out.push_back(n);
+        return out;
+    }
+
+    json cuteCharmJson(u16 tid, u16 sid)
+    {
+        json out = json::array();
+        for (auto &c : CUTE_CHARM)
+        {
+            auto nat = cuteCharmShinyNatures(tid ^ sid, c.buffer);
+            if (!nat.empty()) out.push_back({ { "target", c.key }, { "label", c.label }, { "natures", nat } });
+        }
+        return out;
+    }
+
+    struct IDQuery
+    {
+        std::vector<int> tids, sids;
+        std::vector<u16> xorAllowed; // TID^SID values that pass (Cute Charm / PID filters), empty = any
+        bool hasXorFilter = false;
+    };
+
+    IDQuery idQuery(const json &q)
+    {
+        IDQuery f;
+        if (q.contains("tid") && !q["tid"].is_null()) f.tids.push_back(q["tid"].get<int>());
+        if (q.contains("sid") && !q["sid"].is_null()) f.sids.push_back(q["sid"].get<int>());
+        std::set<u16> allowed;
+        bool any = false;
+        if (q.contains("cuteCharm") && q["cuteCharm"].is_object())
+        {
+            any = true;
+            std::string key = q["cuteCharm"].value("target", "female");
+            auto c = std::find_if(std::begin(CUTE_CHARM), std::end(CUTE_CHARM), [&](auto &x) { return key == x.key; });
+            if (c == std::end(CUTE_CHARM)) throw std::runtime_error("Unknown Cute Charm target: " + key);
+            int nature = q["cuteCharm"].value("nature", -1);
+            u32 minNatures = q["cuteCharm"].value("minNatures", 1u);
+            // Every TID^SID that makes some Cute Charm PID shiny is < 256; keep those meeting the nature / count asks.
+            for (u16 xr = 0; xr < 256; xr++)
+            {
+                auto nat = cuteCharmShinyNatures(xr, c->buffer);
+                if (nat.size() < minNatures || nat.empty()) continue;
+                if (nature >= 0 && std::find(nat.begin(), nat.end(), nature) == nat.end()) continue;
+                allowed.insert(xr);
+            }
+        }
+        if (q.contains("pids") && q["pids"].is_array() && !q["pids"].empty())
+        {
+            // "Make this PID shiny": TID^SID must share the PID's top 13 bits of (high ^ low).
+            std::set<u16> forPid;
+            for (auto &p : q["pids"])
+            {
+                u32 pid = std::stoul(p.get<std::string>(), nullptr, 16);
+                u16 psv = (pid >> 16) ^ (pid & 0xFFFF);
+                for (u16 low = 0; low < 8; low++) forPid.insert(static_cast<u16>((psv & 0xFFF8) | low));
+            }
+            if (any)
+            {
+                std::set<u16> both;
+                for (u16 x : allowed) if (forPid.count(x)) both.insert(x);
+                allowed = both;
+            }
+            else allowed = forPid;
+            any = true;
+        }
+        f.hasXorFilter = any;
+        f.xorAllowed.assign(allowed.begin(), allowed.end());
+        return f;
+    }
+
+    bool idPasses(const IDQuery &f, u16 tid, u16 sid)
+    {
+        if (!f.tids.empty() && std::find(f.tids.begin(), f.tids.end(), tid) == f.tids.end()) return false;
+        if (!f.sids.empty() && std::find(f.sids.begin(), f.sids.end(), sid) == f.sids.end()) return false;
+        if (f.hasXorFilter && !std::binary_search(f.xorAllowed.begin(), f.xorAllowed.end(), static_cast<u16>(tid ^ sid))) return false;
+        return true;
+    }
+
+    json idRow(u32 seed, u16 tid, u16 sid)
+    {
+        char hex[9];
+        std::snprintf(hex, sizeof(hex), "%08X", seed);
+        return { { "seed", hex }, { "tid", tid }, { "sid", sid }, { "tsv", (tid ^ sid) >> 3 }, { "cuteCharm", cuteCharmJson(tid, sid) } };
+    }
+
+    json gen4IDSearch(const json &q)
+    {
+        IDQuery f = idQuery(q);
+        if (f.hasXorFilter && f.xorAllowed.empty()) throw std::runtime_error("No Trainer/Secret ID can satisfy all of those filters together");
+        u16 year = q.value("year", 2000);
+        u32 minDelay = q.value("minDelay", 5000u), maxDelay = q.value("maxDelay", 6000u);
+        u32 hourMin = q.value("hourMin", 0u), hourMax = q.value("hourMax", 23u);
+        if (maxDelay < minDelay || maxDelay - minDelay > 20000) throw std::runtime_error("Keep the delay window to 20,000 or less");
+        size_t limit = q.value("limit", 300u);
+        u32 yearOffset = year - 2000;
+        json out = json::array();
+        size_t total = 0;
+        bool full = false;
+        for (u32 delay = minDelay; delay <= maxDelay && !full; delay++)
+        {
+            for (u32 hour = hourMin; hour <= hourMax && !full; hour++)
+            {
+                for (u32 ab = 0; ab < 256; ab++)
+                {
+                    u32 seed = ((ab << 24) | (hour << 16)) + ((delay + yearOffset) & 0xFFFF);
+                    auto [tid, sid] = id4(seed);
+                    if (!idPasses(f, tid, sid)) continue;
+                    total++;
+                    json j = idRow(seed, tid, sid);
+                    j["delay"] = delay;
+                    j["hour"] = hour;
+                    out.push_back(j);
+                    if (out.size() >= limit) { full = true; break; }
+                }
+            }
+        }
+        return { { "count", total }, { "complete", !full }, { "results", out } };
+    }
+
+    // Which delay/second did I hit? Give the TID on your Trainer Card; this also tells you the SID that came with it.
+    json gen4IDHit(const json &q)
+    {
+        u32 target = std::stoul(q.at("seed").get<std::string>(), nullptr, 16);
+        int tid = q.at("tid").get<int>();
+        int delayRange = q.value("delayRange", 200), secondRange = q.value("secondRange", 2);
+        u32 ab = target >> 24, cd = (target >> 16) & 0xFF, efgh = target & 0xFFFF;
+        json out = json::array();
+        for (int ds = -secondRange; ds <= secondRange; ds++)
+        {
+            for (int dd = -delayRange; dd <= delayRange; dd++)
+            {
+                int e = (int)efgh + dd;
+                if (e < 0 || e > 0xFFFF) continue;
+                u32 seed = (((ab + ds) & 0xFF) << 24) | (cd << 16) | (u32)e;
+                auto [t, s] = id4(seed);
+                if (t != tid) continue;
+                json j = idRow(seed, t, s);
+                j["delayOff"] = dd;
+                j["secondOff"] = ds;
+                out.push_back(j);
+            }
+        }
+        std::stable_sort(out.begin(), out.end(), [](const json &a, const json &b) {
+            return std::abs(a["delayOff"].get<int>()) + 60 * std::abs(a["secondOff"].get<int>()) < std::abs(b["delayOff"].get<int>()) + 60 * std::abs(b["secondOff"].get<int>());
+        });
+        if (out.size() > 20) out.erase(out.begin() + 20, out.end());
+        return { { "results", out } };
+    }
+
     // ------------------------------------------------------------------ SID from a Pokémon you already caught (IVs + nature + TID)
     json findSID(const json &q)
     {
@@ -548,7 +723,9 @@ std::string kitCall(const std::string &fn, const std::string &input)
         else if (fn == "gen3Wild") r = gen3Wild(q);
         else if (fn == "gen4Hit") r = gen4Hit(q);
         else if (fn == "channelJirachi") r = channelJirachi(q);
-        else if (fn == "version") r = json{ { "engine", "PokeFinder Core 4.4.1" }, { "kit", "0.4.0" } };
+        else if (fn == "gen4IDSearch") r = gen4IDSearch(q);
+        else if (fn == "gen4IDHit") r = gen4IDHit(q);
+        else if (fn == "version") r = json{ { "engine", "PokeFinder Core 4.4.1" }, { "kit", "0.5.0" } };
         else throw std::runtime_error("Unknown function: " + fn);
         r["ok"] = true;
         return r.dump();

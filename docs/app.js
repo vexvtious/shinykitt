@@ -133,6 +133,94 @@ $('#f-go').addEventListener('click', async () => {
     : '<li class="static">No PID matches these IVs and nature. Double-check the IVs: they must be exact.</li>';
 });
 
+// ------------------------------------------------------------ pick a TID/SID (Gen 4, new save)
+const HGSS = (g) => g === 'heartgold' || g === 'soulsilver';
+$('#id-nature').insertAdjacentHTML('beforeend', natureOpts);
+function idFormVisibility() {
+  const cc = $('#id-cc').value !== '';
+  $('#id-nature-wrap').hidden = !cc; $('#id-max-wrap').hidden = !cc;
+}
+$('#id-cc').addEventListener('change', idFormVisibility);
+idFormVisibility();
+const natureList = (ns) => ns.map((n) => NATURES[n]).join(', ');
+function ccSummary(r, key) {
+  const c = r.cuteCharm.find((x) => x.target === key);
+  return c ? c.natures : [];
+}
+$('#id-go').addEventListener('click', async () => {
+  const game = $('#id-game').value, cc = $('#id-cc').value;
+  const q = { year: +$('#id-year').value || 2009, minDelay: +$('#id-dmin').value || 5000, maxDelay: +$('#id-dmax').value || 5600, limit: 100 };
+  const num = (id) => { const v = $(id).value.trim(); if (v === '') return null; const n = parseInt(v, 10); return n >= 0 && n <= 65535 ? n : NaN; };
+  const tid = num('#id-tid'), sid = num('#id-sid');
+  if (Number.isNaN(tid) || Number.isNaN(sid)) { toast('IDs must be 0–65535'); return; }
+  if (tid != null) { q.tid = tid; q.limit = 30; }
+  if (sid != null) { q.sid = sid; q.limit = 30; }
+  if (cc) q.cuteCharm = { target: cc, minNatures: $('#id-max').checked ? 8 : 1, ...($('#id-nature').value !== '' ? { nature: +$('#id-nature').value } : {}) };
+  const pid = $('#id-pid').value.trim().toUpperCase().replace(/^0X/, '');
+  if (pid) { if (!/^[0-9A-F]{1,8}$/.test(pid)) { toast('PID must be hex'); return; } q.pids = [pid]; }
+  if (q.maxDelay < q.minDelay) { toast('Delay "to" must be at least "from"'); return; }
+  const status = $('#id-status'), list = $('#id-results');
+  list.innerHTML = ''; $('#id-go').disabled = true;
+  status.textContent = tid != null || sid != null ? 'Searching… a specific ID is rare, this can take several seconds.' : 'Searching…';
+  const out = await engine('gen4IDSearch', q);
+  $('#id-go').disabled = false;
+  if (!out.ok) {
+    status.textContent = out.error + (cc && $('#id-max').checked && $('#id-nature').value !== '' ? '. That nature sits in a smaller group: untick "Most natures shiny".' : '.');
+    return;
+  }
+  status.textContent = out.results.length
+    ? `${out.results.length}${out.complete ? '' : '+'} IDs (${(out.ms / 1000).toFixed(1)} s), lowest delay first. Tap one to pick a boot time.`
+    : 'No IDs in that delay window. Widen it or loosen the filters.';
+  list.innerHTML = out.results.map((r, i) => {
+    const nat = cc ? ccSummary(r, cc) : [];
+    const anyCC = r.cuteCharm.map((c) => `${c.label.split(' (')[0]}: ${c.natures.length}`).join(' · ');
+    return `<li data-i="${i}"><span class="big">TID ${r.tid} · SID ${r.sid}</span><span class="tag ${nat.length ? 'shiny' : ''}">${nat.length ? `★ ${nat.length} natures` : 'TSV ' + r.tsv}</span>
+      <span class="sub">${nat.length ? 'Shiny with Cute Charm: ' + natureList(nat) + ' · ' : anyCC ? 'Cute Charm ' + esc(anyCC) + ' · ' : ''}delay ${r.delay} · hour ${r.hour} · seed ${r.seed}</span></li>`;
+  }).join('');
+  list.querySelectorAll('li[data-i]').forEach((li) => li.onclick = () => chooseID(game, q.year, out.results[+li.dataset.i], li, cc));
+});
+async function chooseID(game, year, r, li, cc) {
+  if (li.nextElementSibling?.classList.contains('pick-times')) { li.nextElementSibling.remove(); return; }
+  const t = await engine('gen4SeedTimes', { seed: r.seed, year, limit: 40 });
+  if (!t.ok) { toast(t.error); return; }
+  li.insertAdjacentHTML('afterend', `<li class="static pick-times"><span class="sub" style="grid-column:1/-1">Pick a boot date and time for TID ${r.tid} / SID ${r.sid}:</span>
+    <ul class="times" style="grid-column:1/-1">${t.results.map((x, i) => `<li data-t="${i}"><span>${x.date} ${x.time}</span><span>delay ${x.delay}</span></li>`).join('')}</ul></li>`);
+  li.nextElementSibling.querySelectorAll('[data-t]').forEach((el) => el.onclick = (e) => {
+    e.stopPropagation();
+    const x = t.results[+el.dataset.t];
+    const [hh, mm, ss] = x.time.split(':').map(Number);
+    const nat = cc ? ccSummary(r, cc) : [];
+    setTarget({ kind: 'id', gen: 4, game, profileId: '__id', tid: r.tid, sid: r.sid, delay: x.delay, second: ss, date: x.date, hour: hh, minute: mm, seed: r.seed, cuteCharm: r.cuteCharm,
+      summary: `New ${GAME_NAME[game]} save · TID ${r.tid} / SID ${r.sid} · seed ${r.seed} · delay ${x.delay}${nat.length ? ' · Cute Charm ' + natureList(nat) : ''}` });
+    idProfileCache = null;
+    go('timer');
+  });
+}
+
+// The ID hunt has no profile yet (that's the point), so the timer uses a stand-in with its own calibration per game.
+let idProfileCache = null;
+function idProfile(t) {
+  if (idProfileCache?.game === t.game) return idProfileCache;
+  let cal = store.get('idcal.' + t.game, null);
+  if (!cal) {
+    const same = profiles.find((p) => p.game === t.game && p.cal && p.cal.calDelay != null);
+    cal = same ? { calDelay: same.cal.calDelay, calSecond: same.cal.calSecond } : { calDelay: HGSS(t.game) ? 490 : 500, calSecond: 14 };
+  }
+  idProfileCache = { id: '__id', game: t.game, cal, name: 'New save (ID hunt)', isIdHunt: true };
+  return idProfileCache;
+}
+function timingProfile() { return target?.kind === 'id' ? idProfile(target) : profileFor(target); }
+function saveIdProfile(t, tid, sid) {
+  const same = profiles.find((p) => p.game === t.game && p.tid === tid && p.sid === sid);
+  if (same) { activeId = same.id; }
+  else {
+    const p = { id: 'p' + Date.now(), name: `${GAME_NAME[t.game]} (new save)`, game: t.game, tid, sid, cal: { calDelay: idProfile(t).cal.calDelay, calSecond: idProfile(t).cal.calSecond }, notes: `ID picked with Shinykitt, seed ${t.seed}` };
+    profiles.push(p); activeId = p.id;
+  }
+  saveProfiles(); renderChip(); loadMons();
+  toast(`Saved TID ${tid} / SID ${sid} as your profile`);
+}
+
 // Painting seeds: "B0C-B27, 0C27" -> [0xB0C..0xB27, 0xC27]
 function parsePaintings(text) {
   const out = [];
@@ -350,7 +438,7 @@ let run = null; // { phases, start, idx, raf, audio }
 function profileFor(t) { return profiles.find((p) => p.id === t?.profileId) || active(); }
 
 function renderTimer() {
-  const p = profileFor(target);
+  const p = timingProfile();
   const tgt = $('#t-target'), fields = $('#t-fields'), calib = $('#t-calibrate'), ins = $('#t-instructions');
   if (!p) { tgt.textContent = 'Add a profile in Setup first.'; fields.innerHTML = calib.innerHTML = ins.textContent = ''; return; }
   const c = calOf(p);
@@ -407,10 +495,11 @@ function renderTimer() {
     calib.innerHTML = `<label class="field">Delay you actually hit<input id="tm-hit" inputmode="numeric" placeholder="or use Find what I hit below"></label>
       <button class="btn wide" id="tm-apply" type="button">Update calibration</button>
       <p class="hint">Find the delay you hit by generating the seed's neighbours (same date and time, nearby delays) and matching your Pokémon. Enter it here and the calibrated delay adjusts.</p>` + hitFinderHtml(true);
+    if (p.isIdHunt) renderIdHunt(p, t, when);
   }
   fields.querySelectorAll('input,select').forEach((el) => el.addEventListener('change', () => saveTimerFields(p)));
   $('#tm-apply').onclick = () => applyCalibration(p);
-  wireHitFinder(p, t);
+  if (!p.isIdHunt) wireHitFinder(p, t); else wireIdHit(p, t);
   saveTimerFields(p);
 }
 function saveTimerFields(p) {
@@ -420,7 +509,8 @@ function saveTimerFields(p) {
     const w = $('#tm-wait'); if (w) { const wait = recordWait(p); w.textContent = wait < 0 ? 'target is before the record' : `${wait.toLocaleString()} adv · ${fmtDuration(framesToMs(p, wait))}`; }
   } else if (isGen3(p.game)) { c.lastFrame = n('#tm-frame', 1000); c.preTimer = n('#tm-pre', 5000); c.calibration = n('#tm-cal', 0); p.console = $('#tm-console').value; }
   else { c.lastDelay = n('#tm-delay', 600); c.lastSecond = n('#tm-second', 50); c.calDelay = n('#tm-cdelay', 500); c.calSecond = n('#tm-csecond', 14); }
-  saveProfiles(); drawIdle(p);
+  if (p.isIdHunt) store.set('idcal.' + p.game, c); else saveProfiles();
+  drawIdle(p);
 }
 function currentPhases(p) {
   saveTimerFields(p);
@@ -449,7 +539,7 @@ async function keepAwake(on) {
 }
 
 $('#t-start').addEventListener('click', () => {
-  const p = profileFor(target); if (!p) return;
+  const p = timingProfile(); if (!p) return;
   if (run) { stopTimer('Stopped'); return; }
   try { audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)(); audioCtx.resume(); } catch { audioCtx = null; }
   const phases = currentPhases(p);
@@ -505,10 +595,18 @@ function applyCalibration(p) {
     note = `Target frame ${tgt}, hit ${hit} → calibration ${adj >= 0 ? '+' : ''}${adj} ms (now ${c.calibration})`;
   } else {
     const tgt = c.lastDelay ?? 600;
-    const delta = toMs('ndsslot1', hit) - toMs('ndsslot1', tgt);
+    // ID hunt: an odd miss is fixed with one extra letter-case switch on the naming screen (it flips the delay's
+    // parity, as in Smogon's and pokemonrng's guides); only the even part of the miss goes into the timer.
+    let used = hit, flipNote = '';
+    if (p.isIdHunt && Math.abs(hit - tgt) % 2 === 1) {
+      c.flip = !c.flip;
+      used = hit + (hit > tgt ? -1 : 1);
+      flipNote = c.flip ? ' · odd miss: switch the name\'s letter case one extra time from now on' : ' · odd miss: drop the extra letter-case switch from now on';
+    }
+    const delta = toMs('ndsslot1', used) - toMs('ndsslot1', tgt);
     const adj = toDelays('ndsslot1', Math.abs(delta) <= 167 ? 0.75 * delta : delta);
     c.calDelay = (c.calDelay ?? 500) + adj;
-    note = `Target delay ${tgt}, hit ${hit} → calibrated delay ${adj >= 0 ? '+' : ''}${adj} (now ${c.calDelay})`;
+    note = `Target delay ${tgt}, hit ${hit} → calibrated delay ${adj >= 0 ? '+' : ''}${adj} (now ${c.calDelay})${flipNote}`;
   }
   attempts.unshift({ when: new Date().toISOString(), game: p.game, profile: p.name || GAME_NAME[p.game], target: target?.summary || '', hit, note });
   attempts = attempts.slice(0, 200); store.set('attempts', attempts);
@@ -560,6 +658,49 @@ function wireHitFinder(p, t) {
   };
 }
 
+// ------------------------------------------------------------ ID hunt timer screen
+function renderIdHunt(p, t, when) {
+  const c = calOf(p);
+  const hg = HGSS(p.game);
+  const flip = c.flip ? ' Then switch the letter case (or Hiragana/Katakana) <b>one extra time</b> before finishing.' : '';
+  $('#t-instructions').innerHTML = `Use a DS or DS Lite (the timer maths are for DS, not 3DS).<br>
+    1. Open the DS clock settings and set it to <b>${esc(when)}</b>, but don't confirm yet.<br>
+    2. Press START here at the same moment you confirm the clock.<br>
+    3. When phase 1 ends, open the game from the DS menu and choose New Game.<br>
+    4. Go through ${hg ? 'Professor Oak' : 'the professor'}'s intro exactly the same way every time${hg ? ' (pick <b>No info needed</b>)' : ''}. Enter your name with the same letters and the same button presses each attempt.${flip}<br>
+    5. Wait on the last text box before your ID is set${hg ? ' (pokemonrng.com\'s HGSS guide has a screenshot of it)' : ''}. When phase 2 ends, press A.<br>
+    6. In your room, open the Trainer Card and look up the TID below. If phase 2 ends before you reach that screen, pick a target with a higher delay.`;
+  $('#t-calibrate').innerHTML = `<label class="field">Delay you actually hit<input id="tm-hit" inputmode="numeric" placeholder="use Find what I hit below"></label>
+    <button class="btn wide" id="tm-apply" type="button">Update calibration</button>
+    <p class="hint">An odd miss (like 5012 when you aimed for 5021) isn't fixed with the timer: the app tells you to switch the name's letter case one extra time, and only the rest goes into the calibration.${p.game === 'diamond' || p.game === 'pearl' ? ' Diamond and Pearl can also flip odd/even on their own; if that keeps happening, just retry.' : ''}${c.flip ? ' <b>Extra case switch: ON.</b>' : ''}</p>
+    <div class="card"><h3>Find what I hit</h3>
+      <p class="hint">Type the TID from your Trainer Card. It finds the delay and second you hit near the target, and the Secret ID that came with it.</p>
+      <div class="row"><label class="field grow">TID you got<input id="ih-tid" inputmode="numeric"></label><label class="field">Search ±<input id="ih-window" inputmode="numeric" value="200"></label></div>
+      <button class="btn wide" id="ih-go" type="button">Find</button>
+      <ol class="results" id="ih-results"></ol></div>`;
+}
+function wireIdHit(p, t) {
+  const btn = $('#ih-go'); if (!btn) return;
+  btn.onclick = async () => {
+    const list = $('#ih-results');
+    const tid = parseInt($('#ih-tid').value, 10);
+    if (!(tid >= 0 && tid <= 65535)) { toast('Enter the TID from your Trainer Card'); return; }
+    if (!t?.seed) { list.innerHTML = '<li class="static">Pick a target ID first, so the lookup knows which seed to search around.</li>'; return; }
+    list.innerHTML = '<li class="static">Searching…</li>';
+    const out = await engine('gen4IDHit', { seed: t.seed, tid, delayRange: Math.max(1, parseInt($('#ih-window').value, 10) || 200), secondRange: 2 });
+    if (!out.ok) { list.innerHTML = `<li class="static">${esc(out.error)}</li>`; return; }
+    if (!out.results.length) { list.innerHTML = '<li class="static">No match nearby. Check the TID, widen the search, or check the clock was set to the right minute.</li>'; return; }
+    list.innerHTML = out.results.map((r, i) => {
+      const exact = r.delayOff === 0 && r.secondOff === 0;
+      return `<li class="static"><span class="big">${exact ? 'Hit it! ' : ''}Delay ${t.delay + r.delayOff}${r.secondOff ? ` · second ${r.secondOff > 0 ? '+' : ''}${r.secondOff}` : ''}</span><span class="tag ${exact ? 'shiny' : ''}">${r.delayOff >= 0 ? '+' : ''}${r.delayOff}</span>
+        <span class="sub">TID ${r.tid} · SID ${r.sid}${r.secondOff ? ' · you missed the second: check the clock and the calibrated second' : ''}${r.delayOff % 2 ? ' · odd miss' : ''}</span>
+        <span class="row" style="grid-column:1/-1">${r.secondOff ? '' : `<button class="btn" type="button" data-ihuse="${i}">Use for calibration</button>`}<button class="btn" type="button" data-ihkeep="${i}">${exact ? 'Save as my profile' : 'Keep this ID instead'}</button></span></li>`;
+    }).join('');
+    list.querySelectorAll('[data-ihuse]').forEach((b) => b.onclick = () => { $('#tm-hit').value = t.delay + out.results[+b.dataset.ihuse].delayOff; $('#tm-hit').scrollIntoView({ behavior: 'smooth', block: 'center' }); toast('Filled in. Press Update to apply.'); });
+    list.querySelectorAll('[data-ihkeep]').forEach((b) => b.onclick = () => { const r = out.results[+b.dataset.ihkeep]; saveIdProfile(t, r.tid, r.sid); });
+  };
+}
+
 // ------------------------------------------------------------ Channel Jirachi (no profile needed: TID is always 40122)
 function jirachiText(r) {
   return [`Channel Jirachi · seed ${r.seed}`, `PID ${r.pid} · ${r.nature} · ${r.shiny ? 'SHINY' : 'not shiny'}`,
@@ -598,9 +739,10 @@ function renderLog() {
     : '<li>No attempts yet. After each try, enter what you hit on the Timer screen and it shows up here.</li>';
 }
 function claudeText() {
-  const p = profileFor(target) || active();
+  const p = timingProfile() || active();
   const lines = ['Shinykitt status', `Date: ${new Date().toString()}`];
-  if (p) {
+  if (p?.isIdHunt) { lines.push(`ID hunt: new ${GAME_NAME[p.game]} save (target TID ${target.tid} / SID ${target.sid})`); lines.push(`Calibration: ${JSON.stringify(calOf(p))}`); }
+  else if (p) {
     lines.push(`Profile: ${p.name || ''} | ${GAME_NAME[p.game]} | TID ${p.tid} | SID ${p.sid}${isGen3(p.game) ? ` | console ${consoleOf(p)}${p.deadBattery ? ' | dead battery' : ''}${p.seed ? ' | seed ' + p.seed : ''}${recordMode(p) ? ' | Battle Record advance ' + p.recordAdvance : ''}${p.paintings ? ' | painting seeds ' + p.paintings : ''}` : ''}${p.notes ? ' | notes: ' + p.notes : ''}`);
     lines.push(`Calibration: ${JSON.stringify(calOf(p))}`);
   }

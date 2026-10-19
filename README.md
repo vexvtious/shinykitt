@@ -10,6 +10,7 @@ An offline-capable RNG search and timer for retail shiny hunting in **Gen 3** (E
 - **Timer:** a two-phase timer with beeps, flashes and vibration, using EonTimer's maths for GBA, DS Lite GBA slot and DS. It adjusts its own calibration from what you actually hit.
 - **Battle Record mode (Emerald):** search from your record's seed and advance; the timer counts only the wait after the record and calibrates as an offset in advances. **Compare painting seeds** ranks your painting seeds for a target.
 - **Find what I hit:** enter the nature and IVs you got and it finds the advance (Gen 3) or delay and second (Gen 4) you actually hit, ready to apply to calibration.
+- **Pick my TID/SID (Gen 4 new save):** finds Trainer ID / Secret ID pairs you can hit when starting a new DPPt or HGSS save: Cute Charm IDs (up to 8 shiny natures for opposite-gender wild Pokémon with a Cute Charm lead), a specific TID or SID, or an ID that makes one PID shiny. Picks the boot time, runs the timer with its own calibration, looks up what you hit from the TID on your Trainer Card (and the SID that came with it), handles the odd/even delay with an extra letter-case switch, and saves the result as a profile.
 - **Find my Secret ID:** enter a caught Pokémon's IVs and nature to get its PID and every Secret ID that would make it shiny.
 - **Copy for Claude:** copies your profile, target, calibration and recent attempts as text to paste into a chat.
 
@@ -41,17 +42,19 @@ After changing anything in `docs/`, bump `VERSION` in `docs/sw.js` so installed 
 
 ### Engine functions
 
-`listStatic`, `gen3Static`, `wild3Species`, `gen3Wild`, `gen4Static`, `gen4Search`, `gen4SeedTimes`, `gen4Hit`, `findSID`, `channelJirachi`, `version`. Each takes one JSON object; see `engine/kit.cpp`.
+`listStatic`, `gen3Static`, `wild3Species`, `gen3Wild`, `gen4Static`, `gen4Search`, `gen4SeedTimes`, `gen4Hit`, `gen4IDSearch`, `gen4IDHit`, `findSID`, `channelJirachi`, `version`. Each takes one JSON object; see `engine/kit.cpp`.
 
 ### Verification
 
 PokéFinder Core was built from this pinned commit and checked against PokéFinder's own Gen 3 and Gen 4 test suites: 227 cases, 14,955 checks, 0 failures. The bindings reproduce the test data, for example Ruby Groudon on seed 0 (Method 4) giving PID `E97E0000` with IVs 17/19/20/18/3/2.
 
+Gen 4 TID/SID: every row of PokéFinder's `id4.json` test data (181 seeds) and 300 random seeds match an independent textbook MT19937 (TID/SID = second output, low/high halves), and Cute Charm shiny natures are rechecked against the Gen 4 shiny rule.
+
 Channel Jirachi spreads are also replayed independently against PKHeX's legality algorithm (menu pattern, accept rolls, SID, the PID shiny-lock quirk, berry, game, OT gender, IVs): 2,000 spreads, 0 mismatches.
 
 ## Not covered yet
 
-Wishmaker Jirachi, Gen 3 eggs, live-battery Ruby/Sapphire seeds, timing a new Battle Video or a painting reseed, Gen 4 wild/eggs/Cute Charm/TID-SID setup, Gen 5 (Black 2), and Gen 7 (3DSRNGTool is still the tool for Ultra Sun).
+Wishmaker Jirachi, Gen 3 eggs, live-battery Ruby/Sapphire seeds, timing a new Battle Video or a painting reseed, Gen 4 wild/eggs (the Cute Charm ID works without them: the shiny boost needs no RNG for the encounter), Gen 5 (Black 2), and Gen 7 (3DSRNGTool is still the tool for Ultra Sun).
 
 ## Licences and credits
 
