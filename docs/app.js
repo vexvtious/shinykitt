@@ -700,7 +700,18 @@ function wireIdHit(p, t) {
     list.innerHTML = '<li class="static">Searching…</li>';
     const out = await engine('gen4IDHit', { seed: t.seed, tid, delayRange: Math.max(1, parseInt($('#ih-window').value, 10) || 200), secondRange: 2 });
     if (!out.ok) { list.innerHTML = `<li class="static">${esc(out.error)}</li>`; return; }
-    if (!out.results.length) { list.innerHTML = '<li class="static">No match nearby. Check the TID, widen the search, or check the clock was set to the right minute.</li>'; return; }
+    if (!out.results.length) {
+      // Nothing near the target: the clock (date, minute or second) or the delay was probably well off. Search wide.
+      list.innerHTML = '<li class="static">Nothing close to the target. Searching wider (a few seconds)…</li>';
+      const wide = await engine('gen4IDHit', { seed: t.seed, tid, delayRange: 1500, secondRange: 128 });
+      const seen = new Set();
+      const rows = (wide.ok ? wide.results : []).filter((r) => !seen.has(r.seed) && seen.add(r.seed)).slice(0, 6);
+      list.innerHTML = `<li class="static"><span class="sub" style="grid-column:1/-1">No match within ±${$('#ih-window').value || 200} delay and ±2 seconds of the target, so this attempt was off by more than timing. Most often the DS <b>date</b> wasn't changed (it must be ${esc(t.date)}), the clock was confirmed at the wrong minute, or the hour was wrong. Double-check the TID too.</span></li>`
+        + (rows.length ? `<li class="static"><span class="sub" style="grid-column:1/-1">Possible matches further out (guesses: many seeds share a TID, so the SID here isn't certain):</span></li>`
+          + rows.map((r) => `<li class="static"><span class="big">Delay ${t.delay + r.delayOff}</span><span class="tag">clock ${r.secondOff > 0 ? '+' : ''}${r.secondOff}</span><span class="sub">TID ${r.tid} · SID ${r.sid}? · "clock ${r.secondOff > 0 ? '+' : ''}${r.secondOff}" means month×day + minute + second came out ${Math.abs(r.secondOff)} ${r.secondOff > 0 ? 'higher' : 'lower'} than the target's</span></li>`).join('')
+          : '<li class="static">No match even searching wide, which points to the hour or the TID being different from what the target expects.</li>');
+      return;
+    }
     list.innerHTML = out.results.map((r, i) => {
       const exact = r.delayOff === 0 && r.secondOff === 0;
       return `<li class="static"><span class="big">${exact ? 'Hit it! ' : ''}Delay ${t.delay + r.delayOff}${r.secondOff ? ` · second ${r.secondOff > 0 ? '+' : ''}${r.secondOff}` : ''}</span><span class="tag ${exact ? 'shiny' : ''}">${r.delayOff >= 0 ? '+' : ''}${r.delayOff}</span>
