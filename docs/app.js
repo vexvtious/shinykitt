@@ -738,7 +738,8 @@ function renderIdHunt(p, t, when) {
     6. In your room, open the Trainer Card and look up the TID below. If phase 2 ends before you reach that screen, pick a target with a higher delay.`;
   $('#t-calibrate').innerHTML = `<label class="field">Delay you actually hit<input id="tm-hit" inputmode="numeric" placeholder="use Find what I hit below"></label>
     <button class="btn wide" id="tm-apply" type="button">Update calibration</button>
-    <p class="hint">An odd miss (like 5012 when you aimed for 5021) isn't fixed with the timer: the app tells you to switch the name's letter case one extra time, and only the rest goes into the calibration.${p.game === 'diamond' || p.game === 'pearl' ? ' Diamond and Pearl can also flip odd/even on their own; if that keeps happening, just retry.' : ''}${c.flip ? ' <b>Extra case switch: ON.</b>' : ''}</p>
+    <label class="check flip"><input type="checkbox" id="tm-flip" ${c.flip ? 'checked' : ''}> Flip delay: switch the name's letter case one extra time</label>
+    <p class="hint">Same as pokemonrng's "Flip Delay". The extra switch changes your delay between odd and even, which the timer can't do. Shinykitt ticks or unticks this for you when you calibrate from an odd miss (like 5012 when you aimed for 5021); you can also set it yourself.${p.game === 'diamond' || p.game === 'pearl' ? ' Diamond and Pearl can also flip odd/even on their own; if that keeps happening, just retry.' : ''}</p>
     <div class="card"><h3>Find what I hit</h3>
       <p class="hint">Type the TID from your Trainer Card. It finds the delay and second you hit near the target, and the Secret ID that came with it.</p>
       <div class="row"><label class="field grow">TID you got<input id="ih-tid" inputmode="numeric"></label><label class="field">Search ±<input id="ih-window" inputmode="numeric" value="200"></label></div>
@@ -746,6 +747,8 @@ function renderIdHunt(p, t, when) {
       <ol class="results" id="ih-results"></ol></div>`;
 }
 function wireIdHit(p, t) {
+  const fl = $('#tm-flip');
+  if (fl) fl.onchange = () => { calOf(p).flip = fl.checked; store.set('idcal.' + p.game, calOf(p)); renderTimer(); toast(fl.checked ? 'Flip delay on: one extra letter-case switch' : 'Flip delay off'); };
   const btn = $('#ih-go'); if (!btn) return;
   btn.onclick = async () => {
     const list = $('#ih-results');
@@ -774,7 +777,7 @@ function wireIdHit(p, t) {
         ? (r.delayOff ? `you pressed A about ${Math.abs(r.delayOff / 59.8261).toFixed(1)} s ${late}` : '')
         : 'the clock second doesn\'t match the delay: check the DS clock was confirmed exactly when you pressed START, then the calibrated second';
       return `<li class="static"><span class="big">${exact ? 'Hit it! ' : ''}Delay ${t.delay + r.delayOff} · ${esc(r.at)}</span><span class="tag ${exact ? 'shiny' : ''}">${r.delayOff >= 0 ? '+' : ''}${r.delayOff}</span>
-        <span class="sub">TID ${r.tid} · SID ${r.sid}${why ? ' · ' + why : ''}${r.delayOff % 2 ? ' · odd miss' : ''}</span>
+        <span class="sub">TID ${r.tid} · SID ${r.sid}${why ? ' · ' + why : ''}${r.delayOff % 2 ? ` · odd miss: calibrating turns Flip delay ${calOf(p).flip ? 'off' : 'on'}` : ''}</span>
         <span class="row" style="grid-column:1/-1">${!r.consistent ? '' : exact ? '' : `<button class="btn" type="button" data-ihuse="${i}">Calibrate with this</button>`}<button class="btn" type="button" data-ihkeep="${i}">${exact ? 'Save as my profile' : 'Keep this ID instead'}</button></span></li>`;
     }).join('');
     list.querySelectorAll('[data-ihuse]').forEach((b) => b.onclick = () => { $('#tm-hit').value = t.delay + out.results[+b.dataset.ihuse].delayOff; applyCalibration(p); $('#t-start').scrollIntoView({ behavior: 'smooth', block: 'center' }); });

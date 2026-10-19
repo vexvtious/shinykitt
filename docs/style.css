@@ -129,3 +129,4 @@ h2, h3 { font-family: var(--f-display); font-size: 10px; margin: 4px 0 10px; let
 .target .boot { margin-top: 8px; }
 .target .boot summary { cursor: pointer; list-style: none; font-size: .95em; }
 .target .boot summary::-webkit-details-marker { display: none; }
+.check.flip { margin: 10px 0 2px; font-weight: bold; }
